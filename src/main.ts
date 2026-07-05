@@ -1,6 +1,6 @@
 import './style.css';
 import { initAuth, getToken, signOut, fetchUserEmail } from './auth';
-import { pickVideo, pickFolder, type PickedFile } from './picker';
+import { listFolder, MY_DRIVE, type DriveItem, type Crumb } from './browser';
 import { downloadFile, resumableUpload, uploadSmallFile } from './drive';
 import { trimVideo, toTimestamp } from './trimmer';
 import { Timeline } from './timeline';
@@ -12,11 +12,13 @@ const video = $<HTMLVideoElement>('video');
 const timeline = new Timeline($('timeline'));
 
 // ---- state ----
-let picked: PickedFile | null = null;
+interface Picked { id: string; name: string; mimeType: string; size: number }
+let picked: Picked | null = null;
 let sourceBlob: Blob | null = null;
 let objectUrl = '';
 let duration = 0;
-let destFolder: { id: string; name: string } | null = null;
+let browsePath: Crumb[] = [MY_DRIVE]; // breadcrumb stack for the main browser
+let destFolder: Crumb | null = null; // upload destination
 let previewingSelection = false;
 
 // ---- tiny UI helpers ----
@@ -33,22 +35,18 @@ function toast(msg: string, ms = 6000): void {
   setTimeout(() => (t.hidden = true), ms);
 }
 
-function busy(title: string, cancellable = false): void {
+function busy(title: string): void {
   $('busy-title').textContent = title;
   $('busy-status').textContent = '';
-  const bar = $<HTMLProgressElement>('busy-bar');
-  bar.removeAttribute('value'); // indeterminate until first progress event
-  $('btn-busy-cancel').hidden = !cancellable;
+  $<HTMLProgressElement>('busy-bar').removeAttribute('value');
   $('busy').hidden = false;
 }
-
 function busyProgress(frac: number | null, status: string): void {
   const bar = $<HTMLProgressElement>('busy-bar');
   if (frac === null) bar.removeAttribute('value');
   else bar.value = frac;
   $('busy-status').textContent = status;
 }
-
 function busyHide(): void {
   $('busy').hidden = true;
 }
@@ -60,8 +58,8 @@ function fmt(sec: number): string {
   const s = (sec % 60).toFixed(1).padStart(4, '0');
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
 }
-
 function fmtBytes(n: number): string {
+  if (!n) return '';
   if (n >= 1e9) return `${(n / 1e9).toFixed(2)} GB`;
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
   return `${Math.round(n / 1e3)} KB`;
@@ -73,7 +71,156 @@ function updateReadout(): void {
   $('out-len').textContent = fmt(timeline.outSec - timeline.inSec);
 }
 
-// ---- metadata key/value rows (video-subtitle-overlay sidecar convention) ----
+// ---- Drive browser ----
+const svgFolder =
+  '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2Z"/></svg>';
+const svgVideo =
+  '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm6 4v8l6-4-6-4Z"/></svg>';
+
+function renderBreadcrumbs(el: HTMLElement, path: Crumb[], onGo: (i: number) => void): void {
+  el.innerHTML = '';
+  path.forEach((crumb, i) => {
+    if (i > 0) {
+      const sep = document.createElement('span');
+      sep.className = 'crumb-sep';
+      sep.textContent = '›';
+      el.appendChild(sep);
+    }
+    const b = document.createElement('button');
+    b.className = 'crumb';
+    b.textContent = crumb.name;
+    b.disabled = i === path.length - 1;
+    b.addEventListener('click', () => onGo(i));
+    el.appendChild(b);
+  });
+}
+
+async function loadBrowser(): Promise<void> {
+  const listEl = $('browse-list');
+  renderBreadcrumbs($('breadcrumbs'), browsePath, (i) => {
+    browsePath = browsePath.slice(0, i + 1);
+    void loadBrowser();
+  });
+  listEl.setAttribute('aria-busy', 'true');
+  listEl.innerHTML = '<div class="browse-empty">Loading…</div>';
+  const token = await getToken();
+  const items = await listFolder(browsePath[browsePath.length - 1].id, token);
+  listEl.setAttribute('aria-busy', 'false');
+  renderItems(listEl, items, false, (item) => {
+    if (item.isFolder) {
+      browsePath = [...browsePath, { id: item.id, name: item.name }];
+      void loadBrowser();
+    } else {
+      void openVideo(item);
+    }
+  });
+}
+
+function renderItems(
+  listEl: HTMLElement,
+  items: DriveItem[],
+  foldersOnly: boolean,
+  onOpen: (item: DriveItem) => void,
+): void {
+  const visible = items.filter((i) => i.isFolder || (!foldersOnly && i.isVideo));
+  const hiddenCount = items.length - visible.length;
+  listEl.innerHTML = '';
+  if (!visible.length) {
+    listEl.innerHTML = `<div class="browse-empty">${
+      foldersOnly ? 'No subfolders here.' : 'No folders or videos here.'
+    }</div>`;
+  }
+  for (const item of visible) {
+    const row = document.createElement('button');
+    row.className = 'browse-row' + (item.isFolder ? ' is-folder' : ' is-video');
+    row.innerHTML =
+      `<span class="row-icon">${item.isFolder ? svgFolder : svgVideo}</span>` +
+      `<span class="row-name">${escapeHtml(item.name)}</span>` +
+      `<span class="row-meta">${item.isFolder ? '' : fmtBytes(item.size)}</span>`;
+    row.addEventListener('click', () => onOpen(item));
+    listEl.appendChild(row);
+  }
+  if (!foldersOnly && hiddenCount > 0) {
+    const note = document.createElement('div');
+    note.className = 'browse-hint';
+    note.textContent = `${hiddenCount} non-video file${hiddenCount > 1 ? 's' : ''} hidden`;
+    listEl.appendChild(note);
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
+}
+
+async function openVideo(item: DriveItem): Promise<void> {
+  picked = { id: item.id, name: item.name, mimeType: item.mimeType, size: item.size };
+  // Default the save destination to the folder the video came from.
+  destFolder = browsePath[browsePath.length - 1];
+  $('dest-label').textContent = destFolder.name;
+
+  if (item.size > 1.9e9) {
+    toast('This file is close to the in-browser 2 GB limit; trimming may fail.', 9000);
+  }
+
+  busy('Downloading from Drive');
+  const token = await getToken();
+  try {
+    sourceBlob = await downloadFile(item.id, token, item.size, (rec, total) =>
+      busyProgress(total ? rec / total : null, `${fmtBytes(rec)} of ${fmtBytes(total)}`),
+    );
+  } finally {
+    busyHide();
+  }
+
+  if (objectUrl) URL.revokeObjectURL(objectUrl);
+  objectUrl = URL.createObjectURL(sourceBlob);
+  video.src = objectUrl;
+  await new Promise<void>((resolve, reject) => {
+    video.onloadedmetadata = () => resolve();
+    video.onerror = () => reject(new Error('This browser cannot play this video format.'));
+  });
+  duration = video.duration;
+  if (!isFinite(duration)) {
+    video.currentTime = 1e9;
+    await new Promise<void>((r) => (video.onseeked = () => r()));
+    duration = video.duration;
+    video.currentTime = 0;
+  }
+
+  timeline.setDuration(duration);
+  updateReadout();
+  void timeline.drawFilmstrip(objectUrl);
+
+  const ext = item.name.match(/\.[^.]+$/)?.[0] ?? '.mp4';
+  $('file-label').textContent = `${item.name} (${fmtBytes(item.size)}, ${fmt(duration)})`;
+  $<HTMLInputElement>('meta-name').value = item.name.replace(/\.[^.]+$/, '') + '-trimmed' + ext;
+  showScreen('screen-edit');
+}
+
+// ---- folder chooser modal (save destination) ----
+let fmPath: Crumb[] = [MY_DRIVE];
+
+async function openFolderModal(): Promise<void> {
+  fmPath = [...browsePath]; // start where the user is browsing
+  $('folder-modal').hidden = false;
+  await loadFolderModal();
+}
+async function loadFolderModal(): Promise<void> {
+  const listEl = $('fm-list');
+  renderBreadcrumbs($('fm-breadcrumbs'), fmPath, (i) => {
+    fmPath = fmPath.slice(0, i + 1);
+    void loadFolderModal();
+  });
+  listEl.innerHTML = '<div class="browse-empty">Loading…</div>';
+  const token = await getToken();
+  const items = await listFolder(fmPath[fmPath.length - 1].id, token);
+  renderItems(listEl, items, true, (item) => {
+    fmPath = [...fmPath, { id: item.id, name: item.name }];
+    void loadFolderModal();
+  });
+}
+
+// ---- metadata key/value rows ----
 function addMetaRow(key = '', value = ''): void {
   const row = document.createElement('div');
   row.className = 'kv-row';
@@ -86,7 +233,6 @@ function addMetaRow(key = '', value = ''): void {
   row.querySelector('.kv-del')!.addEventListener('click', () => row.remove());
   $('meta-rows').appendChild(row);
 }
-
 function collectMeta(): Record<string, string> {
   const out: Record<string, string> = {};
   for (const row of document.querySelectorAll('#meta-rows .kv-row')) {
@@ -105,55 +251,9 @@ async function handleSignIn(): Promise<void> {
     $('account-email').textContent = email;
     $('account-chip').hidden = false;
   }
-  showScreen('screen-pick');
-}
-
-async function handlePick(): Promise<void> {
-  const token = await getToken();
-  const file = await pickVideo(token);
-  if (!file) return;
-  picked = file;
-
-  if (file.sizeBytes > 1.9e9) {
-    toast(
-      'This file is close to the in-browser 2 GB limit; trimming may fail. Consider desktop ffmpeg for files this large.',
-      9000,
-    );
-  }
-
-  busy('Downloading from Drive');
-  try {
-    sourceBlob = await downloadFile(file.id, token, file.sizeBytes, (rec, total) =>
-      busyProgress(total ? rec / total : null, `${fmtBytes(rec)} of ${fmtBytes(total)}`),
-    );
-  } finally {
-    busyHide();
-  }
-
-  if (objectUrl) URL.revokeObjectURL(objectUrl);
-  objectUrl = URL.createObjectURL(sourceBlob);
-  video.src = objectUrl;
-  await new Promise<void>((resolve, reject) => {
-    video.onloadedmetadata = () => resolve();
-    video.onerror = () => reject(new Error('This browser cannot play this video format.'));
-  });
-  duration = video.duration;
-  if (!isFinite(duration)) {
-    // Chrome MediaRecorder recordings report Infinity until seeked past end
-    video.currentTime = 1e9;
-    await new Promise<void>((r) => (video.onseeked = () => r()));
-    duration = video.duration;
-    video.currentTime = 0;
-  }
-
-  timeline.setDuration(duration);
-  updateReadout();
-  void timeline.drawFilmstrip(objectUrl);
-
-  $('file-label').textContent = `${file.name} (${fmtBytes(file.sizeBytes)}, ${fmt(duration)})`;
-  $<HTMLInputElement>('meta-name').value = file.name.replace(/\.[^.]+$/, '') + '-trimmed' +
-    (file.name.match(/\.[^.]+$/)?.[0] ?? '.mp4');
-  showScreen('screen-edit');
+  browsePath = [MY_DRIVE];
+  showScreen('screen-browse');
+  await loadBrowser();
 }
 
 async function runTrim(): Promise<{ blob: Blob; name: string; mimeType: string }> {
@@ -195,9 +295,7 @@ async function handleSave(): Promise<void> {
     trimStart: toTimestamp(timeline.inSec),
     trimEnd: toTimestamp(timeline.outSec),
   };
-  for (const [k, v] of Object.entries(meta)) {
-    appProperties[k] = v.slice(0, 100); // appProperties values are size-limited
-  }
+  for (const [k, v] of Object.entries(meta)) appProperties[k] = v.slice(0, 100);
 
   busy('Uploading to Drive');
   let result;
@@ -247,7 +345,7 @@ async function handleDownloadLocal(): Promise<void> {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-function resetToPick(): void {
+function backToBrowse(): void {
   video.pause();
   video.removeAttribute('src');
   video.load();
@@ -255,10 +353,9 @@ function resetToPick(): void {
   objectUrl = '';
   sourceBlob = null;
   picked = null;
-  destFolder = null;
-  $('dest-label').textContent = 'My Drive';
   $<HTMLTextAreaElement>('meta-desc').value = '';
-  showScreen('screen-pick');
+  showScreen('screen-browse');
+  void loadBrowser();
 }
 
 // ---- wiring ----
@@ -293,43 +390,33 @@ $('btn-signin').addEventListener('click', guard(handleSignIn));
 $('btn-signout').addEventListener('click', () => {
   signOut();
   $('account-chip').hidden = true;
-  resetToPick();
   showScreen('screen-signin');
 });
-$('btn-pick').addEventListener('click', guard(handlePick));
-$('btn-set-in').addEventListener('click', () => {
-  timeline.setIn(video.currentTime, true);
-});
-$('btn-set-out').addEventListener('click', () => {
-  timeline.setOut(video.currentTime, true);
-});
+$('btn-set-in').addEventListener('click', () => timeline.setIn(video.currentTime, true));
+$('btn-set-out').addEventListener('click', () => timeline.setOut(video.currentTime, true));
 $('btn-preview-sel').addEventListener('click', () => {
   video.currentTime = timeline.inSec;
   previewingSelection = true;
   void video.play();
 });
 $('btn-add-row').addEventListener('click', () => addMetaRow());
-$('btn-pick-folder').addEventListener('click', guard(async () => {
-  const token = await getToken();
-  const folder = await pickFolder(token);
-  if (folder) {
-    destFolder = folder;
-    $('dest-label').textContent = folder.name;
-  }
-}));
+$('btn-pick-folder').addEventListener('click', guard(openFolderModal));
+$('fm-cancel').addEventListener('click', () => ($('folder-modal').hidden = true));
+$('fm-choose').addEventListener('click', () => {
+  destFolder = fmPath[fmPath.length - 1];
+  $('dest-label').textContent = destFolder.name;
+  $('folder-modal').hidden = true;
+});
 $('btn-save').addEventListener('click', guard(handleSave));
 $('btn-download-local').addEventListener('click', guard(handleDownloadLocal));
-$('btn-back').addEventListener('click', resetToPick);
-$('btn-again').addEventListener('click', resetToPick);
+$('btn-back').addEventListener('click', backToBrowse);
+$('btn-again').addEventListener('click', backToBrowse);
 
-// Keep the file extension in the name field in sync with the trim mode
-// (lossless copy keeps the container; precise re-encode always emits .mp4).
 $('chk-precise').addEventListener('change', () => {
   if (!picked) return;
   const srcExt = picked.name.match(/\.([^.]+)$/)?.[1] ?? 'mp4';
-  const target = $<HTMLInputElement>('chk-precise') as HTMLInputElement;
   const nameInput = $<HTMLInputElement>('meta-name');
-  const newExt = target.checked ? 'mp4' : srcExt;
+  const newExt = $<HTMLInputElement>('chk-precise').checked ? 'mp4' : srcExt;
   nameInput.value = nameInput.value.replace(/\.[^.]+$/, '') + `.${newExt}`;
 });
 
@@ -342,24 +429,16 @@ document.addEventListener('keydown', (e) => {
       e.preventDefault();
       video.paused ? void video.play() : video.pause();
       break;
-    case 'i': case 'I':
-      timeline.setIn(video.currentTime, true);
-      break;
-    case 'o': case 'O':
-      timeline.setOut(video.currentTime, true);
-      break;
+    case 'i': case 'I': timeline.setIn(video.currentTime, true); break;
+    case 'o': case 'O': timeline.setOut(video.currentTime, true); break;
     case 'ArrowLeft':
       video.currentTime = Math.max(0, video.currentTime - (e.shiftKey ? 5 : 1));
       break;
     case 'ArrowRight':
       video.currentTime = Math.min(duration, video.currentTime + (e.shiftKey ? 5 : 1));
       break;
-    case '[':
-      video.currentTime = timeline.inSec;
-      break;
-    case ']':
-      video.currentTime = timeline.outSec;
-      break;
+    case '[': video.currentTime = timeline.inSec; break;
+    case ']': video.currentTime = timeline.outSec; break;
   }
 });
 

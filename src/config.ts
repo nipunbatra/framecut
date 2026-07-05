@@ -1,11 +1,10 @@
-// Google Cloud project credentials. These are public by design:
-// - the OAuth client only issues tokens to the origins registered below
-// - the API key is referrer-restricted to those same origins
+// Google OAuth client. The client ID is public by design: tokens are only
+// issued to the JavaScript origins registered for this client. No API key is
+// needed — the app browses Drive with the user's bearer token via the Drive
+// REST API (the Google Picker, which required a developer key, was removed).
 export const CONFIG = {
   CLIENT_ID: '754571415429-dve19qtjfntr104sk8a70tb4rt79mgsc.apps.googleusercontent.com',
-  API_KEY: 'AIzaSyDrzxPeI6fgzad5yrsJCaf6vhomX_4kT0Y',
-  // Cloud project number; required by the Picker so that files the user
-  // picks become accessible under the drive.file scope.
-  APP_ID: '754571415429',
-  SCOPES: 'https://www.googleapis.com/auth/drive.file',
+  // Full Drive access so the app can browse the whole folder tree, open any
+  // video, and save trimmed files into any folder.
+  SCOPES: 'https://www.googleapis.com/auth/drive',
 };

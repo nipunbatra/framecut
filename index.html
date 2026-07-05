@@ -26,11 +26,13 @@
       <p class="fineprint">The app can only see files you explicitly pick and files it creates (<code>drive.file</code> scope), never your whole Drive.</p>
     </section>
 
-    <!-- Step 2: pick a video -->
-    <section id="screen-pick" class="screen narrow" hidden>
-      <h1>Choose a video</h1>
-      <p class="lede">Select a recording from your Drive. It will be downloaded to this browser tab for preview and trimming.</p>
-      <button id="btn-pick" class="primary big">Pick a video from Drive</button>
+    <!-- Step 2: browse Drive -->
+    <section id="screen-browse" class="screen wide" hidden>
+      <div class="browse-head">
+        <h1>Choose a video</h1>
+        <nav id="breadcrumbs" class="breadcrumbs" aria-label="Folder path"></nav>
+      </div>
+      <div id="browse-list" class="browse-list" aria-busy="false"></div>
     </section>
 
     <!-- Step 3: edit -->
@@ -93,6 +95,19 @@
       <button id="btn-again" class="ghost">Trim another video</button>
     </section>
   </main>
+
+  <!-- Folder chooser modal (save destination) -->
+  <div id="folder-modal" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <h2>Save trimmed video in&hellip;</h2>
+      <nav id="fm-breadcrumbs" class="breadcrumbs" aria-label="Folder path"></nav>
+      <div id="fm-list" class="browse-list folder-only"></div>
+      <div class="modal-actions">
+        <button id="fm-cancel" class="ghost">Cancel</button>
+        <button id="fm-choose" class="primary">Save in this folder</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Busy overlay -->
   <div id="busy" class="busy-overlay" hidden>
