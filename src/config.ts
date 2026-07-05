@@ -3,7 +3,7 @@
 // - the API key is referrer-restricted to those same origins
 export const CONFIG = {
   CLIENT_ID: '754571415429-dve19qtjfntr104sk8a70tb4rt79mgsc.apps.googleusercontent.com',
-  API_KEY: '__PASTE_AIza_KEY_HERE__',
+  API_KEY: 'AIzaSyDrzxPeI6fgzad5yrsJCaf6vhomX_4kT0Y',
   // Cloud project number; required by the Picker so that files the user
   // picks become accessible under the drive.file scope.
   APP_ID: '754571415429',
