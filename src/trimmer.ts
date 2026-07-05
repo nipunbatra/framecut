@@ -38,51 +38,65 @@ const MIME: Record<string, string> = {
   mkv: 'video/x-matroska',
 };
 
+// The 32 MB ffmpeg.wasm core is loaded once and reused for every trim.
+// Reloading it per trim was the main source of trim latency.
+let loadPromise: Promise<FFmpeg> | null = null;
+let mountCounter = 0;
+// Active callbacks for the single set of event listeners registered on load.
+let curProgress: ((r: number) => void) | null = null;
+let curLog: ((s: string) => void) | null = null;
+
+/**
+ * Load (or return the already-loaded) ffmpeg core. Safe to call early — e.g.
+ * as soon as a video download starts — so the wasm load overlaps with the
+ * download and the first trim is instant.
+ */
+export function preloadFfmpeg(): Promise<FFmpeg> {
+  if (!loadPromise) {
+    const ff = new FFmpeg();
+    ff.on('progress', ({ progress }) => curProgress?.(Math.max(0, Math.min(1, progress))));
+    ff.on('log', ({ message }) => curLog?.(message));
+    const base = new URL('ffmpeg/', document.baseURI).href;
+    loadPromise = ff
+      .load({ coreURL: `${base}ffmpeg-core.js`, wasmURL: `${base}ffmpeg-core.wasm` })
+      .then(() => ff);
+  }
+  return loadPromise;
+}
+
 /**
  * Trim in the browser with ffmpeg.wasm (single-threaded core — no
- * SharedArrayBuffer / COOP-COEP needed, so it runs on GitHub Pages).
+ * SharedArrayBuffer / COOP-COEP needed, so it runs on GitHub Pages and does
+ * not break the Google auth popups that cross-origin isolation would).
  *
- * Fast path matches video-toolkit: stream copy with -avoid_negative_ts.
- * Precise path matches its fallback: libx264 ultrafast crf 17 + aac 128k.
- * A fresh FFmpeg instance is created per job and terminated afterwards so
- * WASM memory is fully released between trims.
+ * Fast path: stream copy with -avoid_negative_ts (a remux, near-instant).
+ * Precise path: libx264 ultrafast crf 17 + aac 128k.
  */
 export async function trimVideo(opts: TrimOptions): Promise<TrimResult> {
-  const ffmpeg = new FFmpeg();
-  if (opts.onLog) {
-    ffmpeg.on('log', ({ message }) => opts.onLog!(message));
-  }
-  if (opts.onProgress) {
-    ffmpeg.on('progress', ({ progress }) => {
-      opts.onProgress!(Math.max(0, Math.min(1, progress)));
-    });
-  }
-
-  const base = new URL('ffmpeg/', document.baseURI).href;
-  await ffmpeg.load({
-    coreURL: `${base}ffmpeg-core.js`,
-    wasmURL: `${base}ffmpeg-core.wasm`,
-  });
+  const ff = await preloadFfmpeg();
+  curProgress = opts.onProgress ?? null;
+  curLog = opts.onLog ?? null;
 
   const inExt = ext(opts.inputName);
-  // Stream copy must keep the container; re-encode always yields mp4.
-  const outExt = opts.precise ? 'mp4' : inExt;
-  const inPath = `input.${inExt}`;
-  const outPath = `output.${outExt}`;
+  const outExt = opts.precise ? 'mp4' : inExt; // copy keeps container; re-encode => mp4
+  const n = ++mountCounter;
+  const mountDir = `/in${n}`;
+  const inName = `input.${inExt}`;
+  const outPath = `out${n}.${outExt}`;
   const duration = opts.endSec - opts.startSec;
 
   let mounted = false;
   try {
-    // WORKERFS reads the File lazily instead of copying it into the WASM
-    // heap — the input file no longer counts against the ~2 GB limit.
-    const file = new File([opts.blob], inPath, { type: opts.blob.type });
-    await ffmpeg.createDir('/work');
-    await ffmpeg.mount('WORKERFS' as any, { files: [file] } as any, '/work');
+    // WORKERFS reads the File lazily instead of copying it into the WASM heap,
+    // so the input file does not count against the ~2 GB heap ceiling.
+    const file = new File([opts.blob], inName, { type: opts.blob.type });
+    await ff.createDir(mountDir);
+    await ff.mount('WORKERFS' as any, { files: [file] } as any, mountDir);
     mounted = true;
   } catch {
-    await ffmpeg.writeFile(inPath, await fetchFile(opts.blob));
+    await ff.writeFile(inName, await fetchFile(opts.blob));
   }
-  const input = mounted ? `/work/${inPath}` : inPath;
+  const input = mounted ? `${mountDir}/${inName}` : inName;
 
   const args = opts.precise
     ? [
@@ -107,9 +121,9 @@ export async function trimVideo(opts: TrimOptions): Promise<TrimResult> {
       ];
 
   try {
-    const code = await ffmpeg.exec(args);
+    const code = await ff.exec(args);
     if (code !== 0) throw new Error(`ffmpeg exited with code ${code}`);
-    const data = (await ffmpeg.readFile(outPath)) as Uint8Array;
+    const data = (await ff.readFile(outPath)) as Uint8Array;
     const mime = MIME[outExt] ?? 'video/mp4';
     const stem = opts.inputName.replace(/\.[^.]+$/, '');
     return {
@@ -118,6 +132,14 @@ export async function trimVideo(opts: TrimOptions): Promise<TrimResult> {
       mimeType: mime,
     };
   } finally {
-    ffmpeg.terminate(); // frees the whole WASM heap
+    // Free everything from this trim without tearing down the loaded core.
+    curProgress = null;
+    curLog = null;
+    try { await ff.deleteFile(outPath); } catch { /* ignore */ }
+    if (mounted) {
+      try { await ff.unmount(mountDir); } catch { /* ignore */ }
+    } else {
+      try { await ff.deleteFile(inName); } catch { /* ignore */ }
+    }
   }
 }

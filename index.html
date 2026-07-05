@@ -28,8 +28,23 @@
 
     <!-- Step 2: browse Drive -->
     <section id="screen-browse" class="screen wide" hidden>
+      <details class="help">
+        <summary>How to use this</summary>
+        <ol>
+          <li>Open a folder to browse; click a <strong>video</strong> to load it.</li>
+          <li>Drag the timeline handles (or press <kbd>I</kbd>/<kbd>O</kbd>) to set the start and end.</li>
+          <li>Add any metadata, then <strong>Trim and save to Drive</strong> — the trimmed copy lands in the folder you choose.</li>
+          <li>Tick <strong>anyone with the link can view</strong> to get a shareable link.</li>
+        </ol>
+      </details>
       <div class="browse-head">
-        <h1>Choose a video</h1>
+        <div class="browse-topline">
+          <h1>Choose a video</h1>
+          <div class="browse-actions">
+            <button id="btn-new-folder" class="ghost small" type="button">+ New folder</button>
+            <button id="btn-share-folder" class="ghost small" type="button">Share folder link</button>
+          </div>
+        </div>
         <nav id="breadcrumbs" class="breadcrumbs" aria-label="Folder path"></nav>
       </div>
       <div id="browse-list" class="browse-list" aria-busy="false"></div>
@@ -76,6 +91,10 @@
             <input type="checkbox" id="chk-sidecar" checked />
             <span>Also save a <code>.json</code> metadata sidecar (works with the subtitle-overlay player)</span>
           </label>
+          <label class="checkbox">
+            <input type="checkbox" id="chk-share" />
+            <span>Make it shareable &mdash; anyone with the link can view</span>
+          </label>
           <div class="dest-row">
             <span>Save in: <strong id="dest-label">My Drive</strong></span>
             <button id="btn-pick-folder" class="ghost small" type="button">Change folder</button>
@@ -91,6 +110,10 @@
     <section id="screen-done" class="screen narrow" hidden>
       <h1>Saved</h1>
       <p class="lede" id="done-summary"></p>
+      <div class="share-row" id="share-row" hidden>
+        <input id="share-link" type="text" readonly />
+        <button id="btn-copy-link" class="ghost small" type="button">Copy link</button>
+      </div>
       <a id="done-link" class="primary big button-link" target="_blank" rel="noopener">Open in Drive</a>
       <button id="btn-again" class="ghost">Trim another video</button>
     </section>
@@ -99,7 +122,10 @@
   <!-- Folder chooser modal (save destination) -->
   <div id="folder-modal" class="modal-overlay" hidden>
     <div class="modal-card">
-      <h2>Save trimmed video in&hellip;</h2>
+      <div class="browse-topline">
+        <h2>Save trimmed video in&hellip;</h2>
+        <button id="fm-new-folder" class="ghost small" type="button">+ New folder</button>
+      </div>
       <nav id="fm-breadcrumbs" class="breadcrumbs" aria-label="Folder path"></nav>
       <div id="fm-list" class="browse-list folder-only"></div>
       <div class="modal-actions">

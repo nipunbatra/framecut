@@ -1,8 +1,8 @@
 import './style.css';
 import { initAuth, getToken, signOut, fetchUserEmail } from './auth';
 import { listFolder, MY_DRIVE, type DriveItem, type Crumb } from './browser';
-import { downloadFile, resumableUpload, uploadSmallFile } from './drive';
-import { trimVideo, toTimestamp } from './trimmer';
+import { downloadFile, resumableUpload, uploadSmallFile, createFolder, shareAnyone } from './drive';
+import { trimVideo, toTimestamp, preloadFfmpeg } from './trimmer';
 import { Timeline } from './timeline';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
@@ -97,6 +97,8 @@ function renderBreadcrumbs(el: HTMLElement, path: Crumb[], onGo: (i: number) => 
 
 async function loadBrowser(): Promise<void> {
   const listEl = $('browse-list');
+  // Sharing "My Drive" itself makes no sense; only enable inside a folder.
+  $<HTMLButtonElement>('btn-share-folder').disabled = browsePath.length <= 1;
   renderBreadcrumbs($('breadcrumbs'), browsePath, (i) => {
     browsePath = browsePath.slice(0, i + 1);
     void loadBrowser();
@@ -158,6 +160,11 @@ async function openVideo(item: DriveItem): Promise<void> {
   destFolder = browsePath[browsePath.length - 1];
   $('dest-label').textContent = destFolder.name;
 
+  // Load ffmpeg.wasm in the background now so it is ready by the time the
+  // download finishes and the user hits Save — the core load stops being
+  // part of the trim's wait.
+  void preloadFfmpeg().catch(() => {});
+
   if (item.size > 1.9e9) {
     toast('This file is close to the in-browser 2 GB limit; trimming may fail.', 9000);
   }
@@ -218,6 +225,56 @@ async function loadFolderModal(): Promise<void> {
     fmPath = [...fmPath, { id: item.id, name: item.name }];
     void loadFolderModal();
   });
+}
+
+// ---- new folder (inline input prepended to a list) ----
+function startNewFolder(
+  listEl: HTMLElement,
+  parentId: string,
+  reload: () => Promise<void>,
+): void {
+  if (listEl.querySelector('.new-row')) return; // already open
+  const row = document.createElement('div');
+  row.className = 'browse-row new-row';
+  row.innerHTML =
+    '<span class="row-icon folder-tint"></span>' +
+    '<input class="new-folder-input" placeholder="New folder name" />' +
+    '<button class="new-ok primary small" type="button">Create</button>' +
+    '<button class="new-cancel ghost small" type="button">Cancel</button>';
+  listEl.prepend(row);
+  const input = row.querySelector('.new-folder-input') as HTMLInputElement;
+  input.focus();
+  const cancel = () => row.remove();
+  const create = () => {
+    const name = input.value.trim();
+    if (!name) return;
+    row.remove();
+    void (async () => {
+      busy('Creating folder');
+      try {
+        const token = await getToken();
+        await createFolder(name, parentId, token);
+      } finally {
+        busyHide();
+      }
+      await reload();
+    })().catch((e) => toast(e?.message ?? String(e)));
+  };
+  row.querySelector('.new-ok')!.addEventListener('click', create);
+  row.querySelector('.new-cancel')!.addEventListener('click', cancel);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') create();
+    else if (e.key === 'Escape') cancel();
+  });
+}
+
+async function copyLink(link: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(link);
+    toast('Link copied to clipboard', 3000);
+  } catch {
+    toast('Copy failed — select the link and copy manually', 5000);
+  }
 }
 
 // ---- metadata key/value rows ----
@@ -325,12 +382,22 @@ async function handleSave(): Promise<void> {
         token,
       );
     }
+
+    if ($<HTMLInputElement>('chk-share').checked) {
+      busyProgress(null, 'Making it shareable…');
+      await shareAnyone(result.id, token);
+    }
   } finally {
     busyHide();
   }
 
+  const shared = $<HTMLInputElement>('chk-share').checked;
   $('done-summary').textContent =
-    `${result.name} (${fmtBytes(out.blob.size)}) saved to ${destFolder?.name ?? 'My Drive'}.`;
+    `${result.name} (${fmtBytes(out.blob.size)}) saved to ${destFolder?.name ?? 'My Drive'}.` +
+    (shared ? ' Anyone with the link can view it.' : '');
+  const shareRow = $('share-row');
+  shareRow.hidden = !shared;
+  if (shared) $<HTMLInputElement>('share-link').value = result.webViewLink;
   $<HTMLAnchorElement>('done-link').href = result.webViewLink;
   showScreen('screen-done');
 }
@@ -400,6 +467,21 @@ $('btn-preview-sel').addEventListener('click', () => {
   void video.play();
 });
 $('btn-add-row').addEventListener('click', () => addMetaRow());
+$('btn-new-folder').addEventListener('click', () =>
+  startNewFolder($('browse-list'), browsePath[browsePath.length - 1].id, loadBrowser),
+);
+$('btn-share-folder').addEventListener('click', guard(async () => {
+  const folder = browsePath[browsePath.length - 1];
+  const token = await getToken();
+  await shareAnyone(folder.id, token);
+  await copyLink(`https://drive.google.com/drive/folders/${folder.id}`);
+}));
+$('fm-new-folder').addEventListener('click', () =>
+  startNewFolder($('fm-list'), fmPath[fmPath.length - 1].id, loadFolderModal),
+);
+$('btn-copy-link').addEventListener('click', () =>
+  void copyLink($<HTMLInputElement>('share-link').value),
+);
 $('btn-pick-folder').addEventListener('click', guard(openFolderModal));
 $('fm-cancel').addEventListener('click', () => ($('folder-modal').hidden = true));
 $('fm-choose').addEventListener('click', () => {

@@ -7,18 +7,75 @@ export interface UploadResult {
   webViewLink: string;
 }
 
+const DL_CHUNK = 12 * 1024 * 1024; // per ranged request
+const DL_CONCURRENCY = 5; // parallel connections
+
 export async function downloadFile(
   fileId: string,
   token: string,
   expectedSize: number,
   onProgress: (received: number, total: number) => void,
 ): Promise<Blob> {
-  const r = await fetch(
-    `${API}/files/${fileId}?alt=media&supportsAllDrives=true`,
-    { headers: { Authorization: `Bearer ${token}` } },
-  );
-  if (!r.ok) throw new Error(`Download failed (HTTP ${r.status})`);
+  const url = `${API}/files/${fileId}?alt=media&supportsAllDrives=true`;
+  // Parallel ranged download: multiple connections get past the per-connection
+  // throttling that makes single-stream Drive downloads slow. Needs a known
+  // size; falls back to a single stream if size is unknown or ranges fail.
+  if (expectedSize > DL_CHUNK) {
+    try {
+      return await downloadParallel(url, token, expectedSize, onProgress);
+    } catch {
+      /* fall through to single-stream */
+    }
+  }
+  return downloadStream(url, token, expectedSize, onProgress);
+}
 
+async function downloadParallel(
+  url: string,
+  token: string,
+  total: number,
+  onProgress: (received: number, total: number) => void,
+): Promise<Blob> {
+  const numChunks = Math.ceil(total / DL_CHUNK);
+  const parts: (Blob | null)[] = new Array(numChunks).fill(null);
+  let received = 0;
+  let next = 0;
+
+  async function worker(): Promise<void> {
+    for (let i = next++; i < numChunks; i = next++) {
+      const start = i * DL_CHUNK;
+      const end = Math.min(start + DL_CHUNK, total) - 1;
+      const r = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}`, Range: `bytes=${start}-${end}` },
+      });
+      if (r.status !== 206) throw new Error('ranges-unsupported'); // triggers fallback
+      const reader = r.body!.getReader();
+      const acc: Uint8Array[] = [];
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        acc.push(value);
+        received += value.length;
+        onProgress(received, total);
+      }
+      parts[i] = new Blob(acc as BlobPart[]);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(DL_CONCURRENCY, numChunks) }, worker),
+  );
+  return new Blob(parts as BlobPart[]);
+}
+
+async function downloadStream(
+  url: string,
+  token: string,
+  expectedSize: number,
+  onProgress: (received: number, total: number) => void,
+): Promise<Blob> {
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!r.ok) throw new Error(`Download failed (HTTP ${r.status})`);
   const total = Number(r.headers.get('Content-Length') ?? expectedSize);
   const reader = r.body!.getReader();
   const chunks: Uint8Array[] = [];
@@ -119,6 +176,44 @@ async function queryUploadOffset(sessionUri: string, total: number): Promise<num
     return range ? Number(range.split('-')[1]) + 1 : 0;
   }
   return 0;
+}
+
+/** Create a subfolder and return its id + shareable webViewLink. */
+export async function createFolder(
+  name: string,
+  parentId: string,
+  token: string,
+): Promise<{ id: string; name: string; webViewLink: string }> {
+  const r = await fetch(
+    `${API}/files?fields=id,name,webViewLink&supportsAllDrives=true`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: [parentId],
+      }),
+    },
+  );
+  if (!r.ok) throw new Error(`Could not create folder (HTTP ${r.status})`);
+  return r.json();
+}
+
+/** Grant "anyone with the link can view" on a file or folder. */
+export async function shareAnyone(fileId: string, token: string): Promise<void> {
+  const r = await fetch(
+    `${API}/files/${fileId}/permissions?supportsAllDrives=true`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role: 'reader', type: 'anyone' }),
+    },
+  );
+  // 200 = created, 400 with existing permission is fine to ignore.
+  if (!r.ok && r.status !== 400) {
+    throw new Error(`Could not share (HTTP ${r.status})`);
+  }
 }
 
 /** Small helper for the JSON metadata sidecar (multipart, single request). */
