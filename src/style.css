@@ -55,8 +55,12 @@ body {
   z-index: 10;
 }
 
-.brand { font-weight: 650; font-size: 1.05rem; letter-spacing: -0.01em; }
-.brand .plus { color: var(--accent); }
+.brand { font-weight: 700; font-size: 1.05rem; letter-spacing: -0.025em; }
+.brand span { display: block; color: var(--muted); font-size: 0.68rem; font-weight: 500; letter-spacing: 0; }
+
+.header-actions { display: flex; align-items: center; gap: 0.9rem; min-width: 0; }
+.companion-link { color: var(--muted); font-size: 0.82rem; font-weight: 600; text-decoration: none; white-space: nowrap; }
+.companion-link:hover { color: var(--accent); }
 
 .account { display: flex; align-items: center; gap: 0.6rem; font-size: 0.85rem; color: var(--muted); min-width: 0; }
 .account span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -99,6 +103,11 @@ button, .button-link {
   transition: background 0.12s, border-color 0.12s;
 }
 button:hover, .button-link:hover { border-color: var(--accent); }
+button:active, .button-link:active { transform: translateY(1px); }
+button:focus-visible, .button-link:focus-visible, .companion-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
 button:disabled { opacity: 0.5; cursor: default; }
 
 .primary {
@@ -110,6 +119,13 @@ button:disabled { opacity: 0.5; cursor: default; }
 .primary:hover { filter: brightness(1.06); }
 .big { padding: 0.7rem 1.5rem; font-size: 1rem; width: 100%; }
 .screen.narrow .big { width: auto; min-width: 16rem; }
+
+@media (max-width: 560px) {
+  .app-header { padding-inline: 0.9rem; }
+  .companion-link { font-size: 0.76rem; }
+  .account span { display: none; }
+  main { padding-inline: 0.9rem; }
+}
 
 .ghost { background: transparent; }
 .small { min-height: 2rem; padding: 0.25rem 0.7rem; font-size: 0.82rem; }

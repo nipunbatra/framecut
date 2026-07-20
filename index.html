@@ -4,26 +4,30 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="light dark" />
-  <title>Video Trim + Store</title>
+  <meta name="description" content="FrameCut trims Google Drive videos in your browser and saves the result with useful metadata." />
+  <title>FrameCut — trim Google Drive video</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='10' y='25' width='80' height='50' rx='8' fill='%234285f4'/><polygon points='42,38 42,62 62,50' fill='white'/></svg>" />
   <script type="module" src="/src/main.ts"></script>
 </head>
 <body>
   <header class="app-header">
-    <div class="brand">Video Trim <span class="plus">+</span> Store</div>
-    <div class="account" id="account-chip" hidden>
-      <span id="account-email"></span>
-      <button id="btn-signout" class="ghost small">Sign out</button>
+    <div class="brand">FrameCut <span>Drive video trimmer</span></div>
+    <div class="header-actions">
+      <a class="companion-link" href="https://nipunbatra.github.io/video-subtitle-overlay/app.html">Open FrameCue</a>
+      <div class="account" id="account-chip" hidden>
+        <span id="account-email"></span>
+        <button id="btn-signout" class="ghost small">Sign out</button>
+      </div>
     </div>
   </header>
 
   <main>
     <!-- Step 1: sign in -->
     <section id="screen-signin" class="screen narrow">
-      <h1>Trim Drive recordings, right in the browser</h1>
-      <p class="lede">Pick a video from Google Drive, cut the start and end, add metadata, and save it back to Drive. Everything runs locally in your browser &mdash; no server, nothing uploaded anywhere else.</p>
+      <h1>Cut the recording. Keep the context.</h1>
+      <p class="lede">Pick a video from Google Drive, mark the useful section, add metadata, and save a clean copy. Everything runs in this browser tab &mdash; no application server or separate upload.</p>
       <button id="btn-signin" class="primary big">Connect Google Drive</button>
-      <p class="fineprint">The app can only see files you explicitly pick and files it creates (<code>drive.file</code> scope), never your whole Drive.</p>
+      <p class="fineprint">FrameCut requests Drive access so it can browse and download the video you choose, then save or share your trimmed copy. Your short-lived access token stays in this tab.</p>
     </section>
 
     <!-- Step 2: browse Drive -->
