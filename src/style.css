@@ -388,6 +388,8 @@ textarea { resize: vertical; }
   font-size: 0.9rem;
   text-align: center;
 }
+.load-failure p { margin: 0 0 0.75rem; overflow-wrap: anywhere; }
+.load-failure button { margin: 0 auto; }
 .browse-hint { padding: 0.6rem; font-size: 0.78rem; border-top: 1px solid var(--border); }
 
 /* Folder chooser modal */

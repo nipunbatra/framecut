@@ -51,13 +51,16 @@ async function downloadParallel(
       if (r.status !== 206) throw new Error('ranges-unsupported'); // triggers fallback
       const reader = r.body!.getReader();
       const acc: Uint8Array[] = [];
+      let chunkReceived = 0;
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
         acc.push(value);
+        chunkReceived += value.length;
         received += value.length;
         onProgress(received, total);
       }
+      if (chunkReceived !== end - start + 1) throw new Error('incomplete-range');
       parts[i] = new Blob(acc as BlobPart[]);
     }
   }
@@ -65,7 +68,9 @@ async function downloadParallel(
   await Promise.all(
     Array.from({ length: Math.min(DL_CONCURRENCY, numChunks) }, worker),
   );
-  return new Blob(parts as BlobPart[]);
+  const blob = new Blob(parts as BlobPart[]);
+  if (blob.size !== total) throw new Error('incomplete-download');
+  return blob;
 }
 
 async function downloadStream(
@@ -76,7 +81,8 @@ async function downloadStream(
 ): Promise<Blob> {
   const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   if (!r.ok) throw new Error(`Download failed (HTTP ${r.status})`);
-  const total = Number(r.headers.get('Content-Length') ?? expectedSize);
+  const contentLength = r.headers.get('Content-Length');
+  const total = Number(contentLength ?? expectedSize);
   const reader = r.body!.getReader();
   const chunks: Uint8Array[] = [];
   let received = 0;
@@ -86,6 +92,9 @@ async function downloadStream(
     chunks.push(value);
     received += value.length;
     onProgress(received, total);
+  }
+  if (contentLength !== null && received !== total) {
+    throw new Error(`Download incomplete (received ${received} of ${total} bytes)`);
   }
   return new Blob(chunks as BlobPart[]);
 }
@@ -144,7 +153,12 @@ export async function resumableUpload(
     } catch (e) {
       if (++attempt > 5) throw e;
       await new Promise((res) => setTimeout(res, 1000 * attempt));
-      offset = await queryUploadOffset(sessionUri, blob.size);
+      const status = await queryUploadStatus(sessionUri, blob.size);
+      if (status.result) {
+        onProgress(blob.size, blob.size);
+        return status.result;
+      }
+      offset = status.offset;
       continue;
     }
     if (r.status === 308) {
@@ -158,7 +172,12 @@ export async function resumableUpload(
     } else if (r.status >= 500 && attempt < 5) {
       attempt++;
       await new Promise((res) => setTimeout(res, 1000 * attempt));
-      offset = await queryUploadOffset(sessionUri, blob.size);
+      const status = await queryUploadStatus(sessionUri, blob.size);
+      if (status.result) {
+        onProgress(blob.size, blob.size);
+        return status.result;
+      }
+      offset = status.offset;
     } else {
       throw new Error(`Upload failed (HTTP ${r.status}): ${await r.text()}`);
     }
@@ -166,16 +185,20 @@ export async function resumableUpload(
   throw new Error('Upload ended unexpectedly');
 }
 
-async function queryUploadOffset(sessionUri: string, total: number): Promise<number> {
+async function queryUploadStatus(
+  sessionUri: string,
+  total: number,
+): Promise<{ offset: number; result?: UploadResult }> {
   const r = await fetch(sessionUri, {
     method: 'PUT',
     headers: { 'Content-Range': `bytes */${total}` },
   });
   if (r.status === 308) {
     const range = r.headers.get('Range');
-    return range ? Number(range.split('-')[1]) + 1 : 0;
+    return { offset: range ? Number(range.split('-')[1]) + 1 : 0 };
   }
-  return 0;
+  if (r.ok) return { offset: total, result: (await r.json()) as UploadResult };
+  throw new Error(`Upload status failed (HTTP ${r.status}): ${await r.text()}`);
 }
 
 /** Create a subfolder and return its id + shareable webViewLink. */

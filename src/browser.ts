@@ -27,9 +27,16 @@ const FOLDER_MIME = 'application/vnd.google-apps.folder';
 export async function listFolder(folderId: string, token: string): Promise<DriveItem[]> {
   const items: DriveItem[] = [];
   let pageToken: string | undefined;
+  const seenPageTokens = new Set<string>();
+  const escapedFolderId = folderId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   do {
+    const marker = pageToken ?? '';
+    if (seenPageTokens.has(marker)) {
+      throw new Error('Drive repeated a page token while listing this folder');
+    }
+    seenPageTokens.add(marker);
     const params = new URLSearchParams({
-      q: `'${folderId}' in parents and trashed=false`,
+      q: `'${escapedFolderId}' in parents and trashed=false`,
       fields: 'nextPageToken, files(id,name,mimeType,size,modifiedTime)',
       orderBy: 'folder,name',
       pageSize: '1000',

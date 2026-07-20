@@ -36,7 +36,57 @@ const MIME: Record<string, string> = {
   mov: 'video/quicktime',
   webm: 'video/webm',
   mkv: 'video/x-matroska',
+  avi: 'video/x-msvideo',
+  ogv: 'video/ogg',
+  ogg: 'video/ogg',
 };
+
+export interface TrimPlan {
+  args: string[];
+  outExt: string;
+  outputPath: string;
+  mimeType: string;
+}
+
+/** Build and validate the ffmpeg command without touching the WASM runtime. */
+export function buildTrimPlan(
+  inputName: string,
+  startSec: number,
+  endSec: number,
+  precise: boolean,
+  inputPath = inputName,
+  outputStem = 'out',
+): TrimPlan {
+  if (![startSec, endSec].every(Number.isFinite) || startSec < 0 || endSec <= startSec) {
+    throw new Error('Trim range must have a finite end after its non-negative start');
+  }
+  const inExt = ext(inputName);
+  const outExt = precise ? 'mp4' : inExt;
+  const outputPath = `${outputStem}.${outExt}`;
+  const duration = endSec - startSec;
+  const args = precise
+    ? [
+        '-ss', toTimestamp(startSec),
+        '-i', inputPath,
+        '-t', toTimestamp(duration),
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '17',
+        '-c:a', 'aac', '-b:a', '128k',
+        '-movflags', '+faststart',
+        outputPath,
+      ]
+    : [
+        '-ss', toTimestamp(startSec),
+        '-i', inputPath,
+        '-t', toTimestamp(duration),
+        '-c', 'copy',
+        '-avoid_negative_ts', 'make_zero',
+        ...(outExt === 'mp4' || outExt === 'm4v' || outExt === 'mov'
+          ? ['-movflags', '+faststart']
+          : []),
+        outputPath,
+      ];
+  return { args, outExt, outputPath, mimeType: MIME[outExt] ?? 'video/mp4' };
+}
 
 // The 32 MB ffmpeg.wasm core is loaded once and reused for every trim.
 // Reloading it per trim was the main source of trim latency.
@@ -59,7 +109,12 @@ export function preloadFfmpeg(): Promise<FFmpeg> {
     const base = new URL('ffmpeg/', document.baseURI).href;
     loadPromise = ff
       .load({ coreURL: `${base}ffmpeg-core.js`, wasmURL: `${base}ffmpeg-core.wasm` })
-      .then(() => ff);
+      .then(() => ff)
+      .catch((error) => {
+        // A transient CDN/network failure must not poison every later retry.
+        loadPromise = null;
+        throw error;
+      });
   }
   return loadPromise;
 }
@@ -73,73 +128,57 @@ export function preloadFfmpeg(): Promise<FFmpeg> {
  * Precise path: libx264 ultrafast crf 17 + aac 128k.
  */
 export async function trimVideo(opts: TrimOptions): Promise<TrimResult> {
+  const inExt = ext(opts.inputName);
+  const n = ++mountCounter;
+  const mountDir = `/in${n}`;
+  const inName = `input.${inExt}`;
+  const initialPlan = buildTrimPlan(
+    opts.inputName, opts.startSec, opts.endSec, opts.precise, inName, `out${n}`,
+  );
   const ff = await preloadFfmpeg();
   curProgress = opts.onProgress ?? null;
   curLog = opts.onLog ?? null;
 
-  const inExt = ext(opts.inputName);
-  const outExt = opts.precise ? 'mp4' : inExt; // copy keeps container; re-encode => mp4
-  const n = ++mountCounter;
-  const mountDir = `/in${n}`;
-  const inName = `input.${inExt}`;
-  const outPath = `out${n}.${outExt}`;
-  const duration = opts.endSec - opts.startSec;
-
   let mounted = false;
+  let mountDirCreated = false;
   try {
     // WORKERFS reads the File lazily instead of copying it into the WASM heap,
     // so the input file does not count against the ~2 GB heap ceiling.
     const file = new File([opts.blob], inName, { type: opts.blob.type });
     await ff.createDir(mountDir);
+    mountDirCreated = true;
     await ff.mount('WORKERFS' as any, { files: [file] } as any, mountDir);
     mounted = true;
   } catch {
     await ff.writeFile(inName, await fetchFile(opts.blob));
   }
   const input = mounted ? `${mountDir}/${inName}` : inName;
-
-  const args = opts.precise
-    ? [
-        '-ss', toTimestamp(opts.startSec),
-        '-i', input,
-        '-t', toTimestamp(duration),
-        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '17',
-        '-c:a', 'aac', '-b:a', '128k',
-        '-movflags', '+faststart',
-        outPath,
-      ]
-    : [
-        '-ss', toTimestamp(opts.startSec),
-        '-i', input,
-        '-t', toTimestamp(duration),
-        '-c', 'copy',
-        '-avoid_negative_ts', 'make_zero',
-        ...(outExt === 'mp4' || outExt === 'm4v' || outExt === 'mov'
-          ? ['-movflags', '+faststart']
-          : []),
-        outPath,
-      ];
+  const plan = input === inName
+    ? initialPlan
+    : buildTrimPlan(opts.inputName, opts.startSec, opts.endSec, opts.precise, input, `out${n}`);
 
   try {
-    const code = await ff.exec(args);
+    const code = await ff.exec(plan.args);
     if (code !== 0) throw new Error(`ffmpeg exited with code ${code}`);
-    const data = (await ff.readFile(outPath)) as Uint8Array;
-    const mime = MIME[outExt] ?? 'video/mp4';
+    const data = (await ff.readFile(plan.outputPath)) as Uint8Array;
     const stem = opts.inputName.replace(/\.[^.]+$/, '');
     return {
-      blob: new Blob([data.slice().buffer as ArrayBuffer], { type: mime }),
-      outputName: `${stem}-trimmed.${outExt}`,
-      mimeType: mime,
+      blob: new Blob([data.slice().buffer as ArrayBuffer], { type: plan.mimeType }),
+      outputName: `${stem}-trimmed.${plan.outExt}`,
+      mimeType: plan.mimeType,
     };
   } finally {
     // Free everything from this trim without tearing down the loaded core.
     curProgress = null;
     curLog = null;
-    try { await ff.deleteFile(outPath); } catch { /* ignore */ }
+    try { await ff.deleteFile(plan.outputPath); } catch { /* ignore */ }
     if (mounted) {
       try { await ff.unmount(mountDir); } catch { /* ignore */ }
     } else {
       try { await ff.deleteFile(inName); } catch { /* ignore */ }
+    }
+    if (mountDirCreated) {
+      try { await ff.deleteDir(mountDir); } catch { /* ignore */ }
     }
   }
 }

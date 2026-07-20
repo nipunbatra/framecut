@@ -45,19 +45,21 @@ export class Timeline {
   }
 
   setDuration(d: number): void {
-    this.duration = d;
+    this.duration = Number.isFinite(d) && d > 0 ? d : 0;
     this.inSec = 0;
-    this.outSec = d;
+    this.outSec = this.duration;
     this.render();
   }
 
   setIn(t: number, emit = false): void {
+    if (!Number.isFinite(t)) return;
     this.inSec = Math.max(0, Math.min(t, this.outSec - 0.1));
     this.render();
     if (emit) this.onChange(this.inSec, this.outSec);
   }
 
   setOut(t: number, emit = false): void {
+    if (!Number.isFinite(t)) return;
     this.outSec = Math.min(this.duration, Math.max(t, this.inSec + 0.1));
     this.render();
     if (emit) this.onChange(this.inSec, this.outSec);
@@ -65,11 +67,13 @@ export class Timeline {
 
   setPlayhead(t: number): void {
     if (!this.duration) return;
-    this.playhead.style.left = `${(t / this.duration) * 100}%`;
+    const bounded = Math.max(0, Math.min(this.duration, Number.isFinite(t) ? t : 0));
+    this.playhead.style.left = `${(bounded / this.duration) * 100}%`;
   }
 
   private pxToTime(clientX: number): number {
     const rect = this.root.getBoundingClientRect();
+    if (!Number.isFinite(rect.width) || rect.width <= 0) return 0;
     const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     return frac * this.duration;
   }
@@ -79,17 +83,26 @@ export class Timeline {
       e.stopPropagation();
       handle.setPointerCapture(e.pointerId);
       const move = (ev: PointerEvent) => apply(this.pxToTime(ev.clientX));
-      const up = () => {
+      const stop = () => {
         handle.removeEventListener('pointermove', move);
-        handle.removeEventListener('pointerup', up);
+        handle.removeEventListener('pointerup', stop);
+        handle.removeEventListener('pointercancel', stop);
+        handle.removeEventListener('lostpointercapture', stop);
       };
       handle.addEventListener('pointermove', move);
-      handle.addEventListener('pointerup', up);
+      handle.addEventListener('pointerup', stop);
+      handle.addEventListener('pointercancel', stop);
+      handle.addEventListener('lostpointercapture', stop);
     });
   }
 
   private render(): void {
-    if (!this.duration) return;
+    if (!this.duration) {
+      for (const el of [this.handleIn, this.handleOut, this.shadeL, this.shadeR, this.playhead]) {
+        el.removeAttribute('style');
+      }
+      return;
+    }
     const inPct = (this.inSec / this.duration) * 100;
     const outPct = (this.outSec / this.duration) * 100;
     this.handleIn.style.left = `calc(${inPct}% - 14px)`;

@@ -4,6 +4,8 @@ import { listFolder, MY_DRIVE, type DriveItem, type Crumb } from './browser';
 import { downloadFile, resumableUpload, uploadSmallFile, createFolder, shareAnyone } from './drive';
 import { trimVideo, toTimestamp, preloadFfmpeg } from './trimmer';
 import { Timeline } from './timeline';
+import { renderLoadFailure } from './load-state';
+import { buildAppProperties } from './metadata';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
@@ -20,6 +22,9 @@ let duration = 0;
 let browsePath: Crumb[] = [MY_DRIVE]; // breadcrumb stack for the main browser
 let destFolder: Crumb | null = null; // upload destination
 let previewingSelection = false;
+let signInPending = false;
+let browseRequestId = 0;
+let folderModalRequestId = 0;
 
 // ---- tiny UI helpers ----
 function showScreen(id: string): void {
@@ -33,6 +38,16 @@ function toast(msg: string, ms = 6000): void {
   t.textContent = msg;
   t.hidden = false;
   setTimeout(() => (t.hidden = true), ms);
+}
+
+function reportError(error: unknown): void {
+  busyHide();
+  toast(error instanceof Error ? error.message : String(error));
+  console.error(error);
+}
+
+function runAsync(fn: () => Promise<void>): void {
+  void fn().catch(reportError);
 }
 
 function busy(title: string): void {
@@ -96,6 +111,7 @@ function renderBreadcrumbs(el: HTMLElement, path: Crumb[], onGo: (i: number) => 
 }
 
 async function loadBrowser(): Promise<void> {
+  const requestId = ++browseRequestId;
   const listEl = $('browse-list');
   // Sharing "My Drive" itself makes no sense; only enable inside a folder.
   $<HTMLButtonElement>('btn-share-folder').disabled = browsePath.length <= 1;
@@ -105,17 +121,24 @@ async function loadBrowser(): Promise<void> {
   });
   listEl.setAttribute('aria-busy', 'true');
   listEl.innerHTML = '<div class="browse-empty">Loading…</div>';
-  const token = await getToken();
-  const items = await listFolder(browsePath[browsePath.length - 1].id, token);
-  listEl.setAttribute('aria-busy', 'false');
-  renderItems(listEl, items, false, (item) => {
-    if (item.isFolder) {
-      browsePath = [...browsePath, { id: item.id, name: item.name }];
-      void loadBrowser();
-    } else {
-      void openVideo(item);
-    }
-  });
+  try {
+    const token = await getToken();
+    const items = await listFolder(browsePath[browsePath.length - 1].id, token);
+    if (requestId !== browseRequestId) return;
+    listEl.setAttribute('aria-busy', 'false');
+    renderItems(listEl, items, false, (item) => {
+      if (item.isFolder) {
+        browsePath = [...browsePath, { id: item.id, name: item.name }];
+        void loadBrowser();
+      } else {
+        runAsync(() => openVideo(item));
+      }
+    });
+  } catch (error) {
+    if (requestId !== browseRequestId) return;
+    renderLoadFailure(listEl, error, loadBrowser);
+    toast('Could not load this Drive folder.');
+  }
 }
 
 function renderItems(
@@ -213,18 +236,28 @@ async function openFolderModal(): Promise<void> {
   await loadFolderModal();
 }
 async function loadFolderModal(): Promise<void> {
+  const requestId = ++folderModalRequestId;
   const listEl = $('fm-list');
   renderBreadcrumbs($('fm-breadcrumbs'), fmPath, (i) => {
     fmPath = fmPath.slice(0, i + 1);
     void loadFolderModal();
   });
+  listEl.setAttribute('aria-busy', 'true');
   listEl.innerHTML = '<div class="browse-empty">Loading…</div>';
-  const token = await getToken();
-  const items = await listFolder(fmPath[fmPath.length - 1].id, token);
-  renderItems(listEl, items, true, (item) => {
-    fmPath = [...fmPath, { id: item.id, name: item.name }];
-    void loadFolderModal();
-  });
+  try {
+    const token = await getToken();
+    const items = await listFolder(fmPath[fmPath.length - 1].id, token);
+    if (requestId !== folderModalRequestId) return;
+    listEl.setAttribute('aria-busy', 'false');
+    renderItems(listEl, items, true, (item) => {
+      fmPath = [...fmPath, { id: item.id, name: item.name }];
+      void loadFolderModal();
+    });
+  } catch (error) {
+    if (requestId !== folderModalRequestId) return;
+    renderLoadFailure(listEl, error, loadFolderModal);
+    toast('Could not load this Drive folder.');
+  }
 }
 
 // ---- new folder (inline input prepended to a list) ----
@@ -302,15 +335,24 @@ function collectMeta(): Record<string, string> {
 
 // ---- flow ----
 async function handleSignIn(): Promise<void> {
-  const token = await getToken(true);
-  const email = await fetchUserEmail(token);
-  if (email) {
-    $('account-email').textContent = email;
-    $('account-chip').hidden = false;
+  if (signInPending) return;
+  signInPending = true;
+  const button = $<HTMLButtonElement>('btn-signin');
+  button.disabled = true;
+  try {
+    const token = await getToken(true);
+    const email = await fetchUserEmail(token);
+    if (email) {
+      $('account-email').textContent = email;
+      $('account-chip').hidden = false;
+    }
+    browsePath = [MY_DRIVE];
+    showScreen('screen-browse');
+    await loadBrowser();
+  } finally {
+    signInPending = false;
+    button.disabled = false;
   }
-  browsePath = [MY_DRIVE];
-  showScreen('screen-browse');
-  await loadBrowser();
 }
 
 async function runTrim(): Promise<{ blob: Blob; name: string; mimeType: string }> {
@@ -346,13 +388,18 @@ async function handleSave(): Promise<void> {
   const desc = $<HTMLTextAreaElement>('meta-desc').value.trim();
   const kvLines = Object.entries(meta).map(([k, v]) => `${k}: ${v}`).join('\n');
 
-  const appProperties: Record<string, string> = {
-    tool: 'video-trim-metadata-store',
+  const propertyResult = buildAppProperties({
+    tool: 'framecut',
     sourceFileId: picked!.id,
     trimStart: toTimestamp(timeline.inSec),
     trimEnd: toTimestamp(timeline.outSec),
-  };
-  for (const [k, v] of Object.entries(meta)) appProperties[k] = v.slice(0, 100);
+  }, meta);
+  if (propertyResult.omitted || propertyResult.truncated) {
+    toast(
+      'Some searchable Drive metadata exceeded API limits; the full values remain in the description and sidecar.',
+      9000,
+    );
+  }
 
   busy('Uploading to Drive');
   let result;
@@ -364,7 +411,7 @@ async function handleSave(): Promise<void> {
         mimeType: out.mimeType,
         description: [desc, kvLines].filter(Boolean).join('\n\n'),
         parents: destFolder ? [destFolder.id] : undefined,
-        appProperties,
+        appProperties: propertyResult.properties,
       },
       token,
       (sent, total) => busyProgress(sent / total, `${fmtBytes(sent)} of ${fmtBytes(total)}`),
@@ -427,13 +474,7 @@ function backToBrowse(): void {
 
 // ---- wiring ----
 function guard(fn: () => Promise<void>): () => void {
-  return () => {
-    fn().catch((e) => {
-      busyHide();
-      toast(e?.message ?? String(e));
-      console.error(e);
-    });
-  };
+  return () => runAsync(fn);
 }
 
 timeline.onChange = () => {
