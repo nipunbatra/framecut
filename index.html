@@ -10,6 +10,7 @@
   <script type="module" src="/src/main.ts"></script>
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to content</a>
   <header class="app-header">
     <div class="brand">FrameCut <span>Drive video trimmer</span></div>
     <div class="header-actions">
@@ -21,13 +22,18 @@
     </div>
   </header>
 
-  <main>
+  <main id="main">
     <!-- Step 1: sign in -->
     <section id="screen-signin" class="screen narrow">
       <h1>Cut the recording. Keep the context.</h1>
       <p class="lede">Pick a video from Google Drive, mark the useful section, add metadata, and save a clean copy. Everything runs in this browser tab &mdash; no application server or separate upload.</p>
-      <button id="btn-signin" class="primary big">Connect Google Drive</button>
-      <p class="fineprint">FrameCut requests Drive access so it can browse and download the video you choose, then save or share your trimmed copy. Your short-lived access token stays in this tab.</p>
+      <ol class="flow-summary" aria-label="FrameCut workflow">
+        <li><span>1</span>Choose</li>
+        <li><span>2</span>Trim</li>
+        <li><span>3</span>Save</li>
+      </ol>
+      <button id="btn-signin" class="primary big">Continue with Google</button>
+      <p class="fineprint">FrameCut uses Drive access—not Gmail—to browse and download the video you choose, then save or share your trimmed copy. The short-lived token stays in this tab and is revoked when you sign out.</p>
     </section>
 
     <!-- Step 2: browse Drive -->

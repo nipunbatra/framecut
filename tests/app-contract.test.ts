@@ -22,6 +22,15 @@ describe('application contract and deployment safety', () => {
     for (const id of required) expect(html).toContain(`id="${id}"`);
   });
 
+  it('provides a concise, keyboard-accessible first-use path', () => {
+    expect(html).toContain('class="skip-link" href="#main"');
+    expect(html).toContain('<main id="main">');
+    expect(html).toContain('aria-label="FrameCut workflow"');
+    expect(html).toContain('>Choose</li>');
+    expect(html).toContain('>Trim</li>');
+    expect(html).toContain('>Save</li>');
+  });
+
   it('uses the renamed product, repository, and companion site', () => {
     expect(html).toContain('<title>FrameCut — trim Google Drive video</title>');
     expect(html).toContain('https://nipunbatra.github.io/framecue/app.html');
@@ -31,6 +40,8 @@ describe('application contract and deployment safety', () => {
 
   it('discloses the actual Drive capability without the retired drive.file claim', () => {
     expect(html).toContain('browse and download the video you choose');
+    expect(html).toContain('uses Drive access—not Gmail');
+    expect(html).toContain('revoked when you sign out');
     expect(html).not.toContain('drive.file');
     expect(CONFIG.SCOPES).toBe('https://www.googleapis.com/auth/drive');
   });

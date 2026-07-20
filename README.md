@@ -1,42 +1,44 @@
 # FrameCut
 
-FrameCut trims Google Drive videos entirely in the browser. Choose a Drive video, set the start and end, add metadata, then save the trimmed copy and an optional JSON sidecar back to Drive—or download it locally.
+FrameCut trims Google Drive video entirely in your browser, then saves the result and optional metadata sidecar back to Drive—or downloads it locally.
 
-**Live app:** https://nipunbatra.github.io/framecut/
+**[Open FrameCut](https://nipunbatra.github.io/framecut/)** · Playback companion: **[FrameCue](https://nipunbatra.github.io/framecue/app.html)**
 
-**Playback companion:** [FrameCue](https://nipunbatra.github.io/framecue/) adds subtitles, metadata, and a responsive timecode overlay for screen sharing.
+## Use it
 
-## What it does
+1. **Continue with Google** and choose a Drive video.
+2. Drag the timeline handles or press `I` / `O` to mark the section.
+3. Add a file name, description, or custom metadata.
+4. Save to a Drive folder, create a shareable link, or download locally.
 
-- browses folders and video files in My Drive and shared drives;
-- downloads the selected source directly into the browser;
-- supports fast keyframe-aligned stream copy or precise H.264/AAC re-encoding;
-- uploads the result with resumable Drive transfers;
-- can create destination folders, save a JSON metadata sidecar, and optionally enable link sharing;
-- keeps the short-lived Google access token in memory and revokes it on sign-out.
+Fast mode makes a lossless keyframe-aligned cut. **Precise cut** re-encodes to H.264/AAC when the exact frame matters.
 
-FrameCut requests the full Google Drive scope because it must open existing videos and save results in arbitrary folders chosen by the user. It does not request Gmail access and has no application server, analytics, advertising, API key, or client secret.
+## Privacy and permissions
+
+FrameCut requests Google Drive access because it must open an existing video and save into a folder you choose. It does **not** request Gmail access and has no application server, analytics, advertising, API key, or client secret.
+
+The short-lived access token stays in memory and is revoked on sign-out. Video bytes move directly between Drive and this browser tab.
+
+## Reliability
+
+| Area | Guardrails covered by tests |
+|---|---|
+| Google authorization | one-time initialization, concurrent requests, silent renewal, expiry, popup/script failure, revoke |
+| Drive browsing | My Drive and shared drives, pagination, escaped search, folders, empty and failed states |
+| Downloads | bearer authorization, progress, byte ranges, incomplete response rejection, safe stream fallback |
+| Trimming | validated time bounds, seeking, fast and precise FFmpeg commands, cancellation |
+| Uploads | resumable chunks, server offsets, interrupted/final-response recovery, folders, sharing, JSON sidecars |
+| App contract | responsive UI, required controls, OAuth origin safety, secret absence, production build |
 
 ## Development
 
 ```bash
 npm install
 npm run dev
+npm run check     # tests + strict TypeScript production build
+npm audit
 ```
 
-Google authorization is origin-restricted. The shared Web OAuth client currently authorizes the hosted GitHub Pages origin and `http://localhost:5173` for local development.
-
-## Verification
-
-```bash
-npm test        # unit and integration tests
-npm run build   # strict TypeScript check + production build
-npm run check   # both
-npm audit       # dependency advisory scan
-```
-
-The test suite covers Drive browsing and pagination, query escaping, downloads and ranged fallback, resumable uploads, folder/share/sidecar operations, OAuth initialization and token lifecycle, timeline bounds and seeking, trim command construction, deployment contracts, and secret absence. GitHub Actions runs tests and the production build on every pull request and push to `main`.
-
-## License
+Google authorization is origin-restricted. The shared Web OAuth client authorizes the hosted GitHub Pages origin and `http://localhost:5173` for local development. A fork on a different origin needs its own authorized Web client configuration.
 
 MIT © Nipun Batra
