@@ -19,6 +19,66 @@ export interface Crumb {
 
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 
+function toItem(f: {
+  id: string; name: string; mimeType: string; size?: string; modifiedTime?: string;
+}): DriveItem {
+  return {
+    id: f.id,
+    name: f.name,
+    mimeType: f.mimeType,
+    size: Number(f.size ?? 0),
+    isFolder: f.mimeType === FOLDER_MIME,
+    isVideo: f.mimeType.startsWith('video/'),
+    modifiedTime: f.modifiedTime ?? '',
+  };
+}
+
+export type SortKey = 'name' | 'modified' | 'size';
+
+/**
+ * Sort folders first, then by the chosen key; ties fall back to name order so
+ * the result is stable and predictable. `dir` flips the primary key only.
+ */
+export function sortItems(items: DriveItem[], key: SortKey, dir: 1 | -1): DriveItem[] {
+  return [...items].sort((a, b) => {
+    if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+    const byName = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+    if (key === 'name') return dir * byName;
+    const d = key === 'size' ? a.size - b.size : a.modifiedTime.localeCompare(b.modifiedTime);
+    return d ? dir * d : byName;
+  });
+}
+
+/** Case-insensitive substring filter on item names. Empty text keeps all. */
+export function filterItems(items: DriveItem[], text: string): DriveItem[] {
+  const needle = text.trim().toLowerCase();
+  if (!needle) return items;
+  return items.filter((i) => i.name.toLowerCase().includes(needle));
+}
+
+/**
+ * Search everywhere the user can reach — My Drive, shared with me, and shared
+ * drives — for videos and folders whose name matches. Single request capped at
+ * 1000 results; the caller sorts client-side.
+ */
+export async function searchDrive(text: string, token: string): Promise<DriveItem[]> {
+  const escaped = text.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const params = new URLSearchParams({
+    q: `name contains '${escaped}' and trashed=false and (mimeType='${FOLDER_MIME}' or mimeType contains 'video/')`,
+    fields: 'files(id,name,mimeType,size,modifiedTime)',
+    pageSize: '1000',
+    supportsAllDrives: 'true',
+    includeItemsFromAllDrives: 'true',
+    corpora: 'allDrives',
+  });
+  const r = await fetch(`${API}/files?${params}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!r.ok) throw new Error(`Search failed (HTTP ${r.status})`);
+  const j = await r.json();
+  return (j.files ?? []).map(toItem);
+}
+
 /**
  * List children of a folder. Folders first, then everything else, name-sorted.
  * Follows pagination so large folders return fully. Works across My Drive and
@@ -55,18 +115,7 @@ export async function listFolder(folderId: string, token: string): Promise<Drive
     });
     if (!r.ok) throw new Error(`Could not list folder (HTTP ${r.status})`);
     const j = await r.json();
-    for (const f of j.files ?? []) {
-      const isFolder = f.mimeType === FOLDER_MIME;
-      items.push({
-        id: f.id,
-        name: f.name,
-        mimeType: f.mimeType,
-        size: Number(f.size ?? 0),
-        isFolder,
-        isVideo: (f.mimeType as string).startsWith('video/'),
-        modifiedTime: f.modifiedTime ?? '',
-      });
-    }
+    for (const f of j.files ?? []) items.push(toItem(f));
     pageToken = j.nextPageToken;
   } while (pageToken);
   return items;
