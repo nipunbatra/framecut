@@ -18,6 +18,7 @@ describe('application contract and deployment safety', () => {
     const required = [
       'btn-signin', 'btn-signout', 'browse-list', 'video', 'timeline', 'meta-name',
       'btn-save', 'btn-download-local', 'folder-modal', 'busy', 'toast',
+      'tab-my-drive', 'tab-shared', 'fm-tab-my-drive', 'fm-tab-shared',
     ];
     for (const id of required) expect(html).toContain(`id="${id}"`);
   });
