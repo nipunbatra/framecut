@@ -6,7 +6,7 @@ FrameCut trims Google Drive video entirely in your browser, then saves the resul
 
 ## Use it
 
-1. **Continue with Google** and choose a Drive video — from My Drive or **Shared with me**.
+1. **Continue with Google** and choose a Drive video — from My Drive or **Shared with me**. Sort by name, modified date, or size; type to filter the folder instantly, or press Enter to search all of Drive.
 2. Drag the timeline handles or press `I` / `O` to mark the section.
 3. Add a file name, description, or custom metadata.
 4. Save to a Drive folder, create a shareable link, or download locally.
@@ -24,7 +24,7 @@ The short-lived access token stays in memory and is revoked on sign-out. Video b
 | Area | Guardrails covered by tests |
 |---|---|
 | Google authorization | one-time initialization, concurrent requests, silent renewal, expiry, popup/script failure, revoke |
-| Drive browsing | My Drive, Shared with me, and shared drives, pagination, escaped search, folders, empty and failed states |
+| Drive browsing | My Drive, Shared with me, and shared drives, pagination, sort and filter, Drive-wide search, escaped queries, empty and failed states |
 | Downloads | bearer authorization, progress, byte ranges, incomplete response rejection, safe stream fallback |
 | Trimming | validated time bounds, seeking, fast and precise FFmpeg commands, cancellation |
 | Uploads | resumable chunks, server offsets, interrupted/final-response recovery, folders, sharing, JSON sidecars |

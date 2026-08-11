@@ -1,6 +1,9 @@
 import './style.css';
 import { initAuth, getToken, signOut, fetchUserEmail } from './auth';
-import { listFolder, MY_DRIVE, SHARED_WITH_ME, type DriveItem, type Crumb } from './browser';
+import {
+  filterItems, listFolder, MY_DRIVE, searchDrive, SHARED_WITH_ME, sortItems,
+  type Crumb, type DriveItem, type SortKey,
+} from './browser';
 import { downloadFile, resumableUpload, uploadSmallFile, createFolder, shareAnyone } from './drive';
 import { trimVideo, toTimestamp, preloadFfmpeg } from './trimmer';
 import { Timeline } from './timeline';
@@ -25,6 +28,20 @@ let previewingSelection = false;
 let signInPending = false;
 let browseRequestId = 0;
 let folderModalRequestId = 0;
+let browseItems: DriveItem[] = []; // current listing, cached for instant sort/filter
+let searchMode = false; // list shows Drive-wide search results, not a folder
+let filterText = '';
+let sortKey: SortKey = 'name';
+let sortDir: 1 | -1 = 1;
+
+const SORT_PREF = 'framecut.sort';
+try {
+  const saved = JSON.parse(localStorage.getItem(SORT_PREF) ?? '');
+  if (['name', 'modified', 'size'].includes(saved.key) && (saved.dir === 1 || saved.dir === -1)) {
+    sortKey = saved.key;
+    sortDir = saved.dir;
+  }
+} catch { /* no saved preference */ }
 
 // ---- tiny UI helpers ----
 function showScreen(id: string): void {
@@ -79,6 +96,13 @@ function fmtBytes(n: number): string {
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
   return `${Math.round(n / 1e3)} KB`;
 }
+function fmtDate(iso: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d.getTime())
+    ? ''
+    : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
 
 function updateReadout(): void {
   $('out-in').textContent = fmt(timeline.inSec);
@@ -118,10 +142,19 @@ function setRootTabs(myDriveTabId: string, sharedTabId: string, root: Crumb): vo
   $(sharedTabId).setAttribute('aria-pressed', String(isSharedRoot(root)));
 }
 
+const searchBox = $<HTMLInputElement>('browse-search');
+
+function clearSearchBox(): void {
+  searchBox.value = '';
+  filterText = '';
+}
+
 async function loadBrowser(): Promise<void> {
   const requestId = ++browseRequestId;
   const listEl = $('browse-list');
   const current = browsePath[browsePath.length - 1];
+  searchMode = false;
+  clearSearchBox();
   // Sharing "My Drive" itself makes no sense; only enable inside a folder.
   $<HTMLButtonElement>('btn-share-folder').disabled = browsePath.length <= 1;
   $<HTMLButtonElement>('btn-new-folder').disabled = isSharedRoot(current);
@@ -136,19 +169,87 @@ async function loadBrowser(): Promise<void> {
     const token = await getToken();
     const items = await listFolder(browsePath[browsePath.length - 1].id, token);
     if (requestId !== browseRequestId) return;
+    browseItems = items;
     listEl.setAttribute('aria-busy', 'false');
-    renderItems(listEl, items, false, (item) => {
-      if (item.isFolder) {
-        browsePath = [...browsePath, { id: item.id, name: item.name }];
-        void loadBrowser();
-      } else {
-        runAsync(() => openVideo(item));
-      }
-    });
+    renderBrowseList();
   } catch (error) {
     if (requestId !== browseRequestId) return;
     renderLoadFailure(listEl, error, loadBrowser);
     toast('Could not load this Drive folder.');
+  }
+}
+
+/** Re-render the cached listing with the current filter and sort. No network. */
+function renderBrowseList(): void {
+  const listEl = $('browse-list');
+  const visible = sortItems(filterItems(browseItems, filterText), sortKey, sortDir);
+  const emptyMsg = searchMode
+    ? 'Nothing in Drive matches this search.'
+    : filterText.trim()
+      ? 'No matches in this folder.'
+      : undefined;
+  renderItems(listEl, visible, false, (item) => {
+    if (item.isFolder) {
+      // From search results the real parent chain is unknown, so restart the
+      // breadcrumb at the current root.
+      browsePath = searchMode
+        ? [browsePath[0], { id: item.id, name: item.name }]
+        : [...browsePath, { id: item.id, name: item.name }];
+      void loadBrowser();
+    } else {
+      runAsync(() => openVideo(item));
+    }
+  }, emptyMsg);
+  updateSortButtons();
+}
+
+async function runSearch(query: string): Promise<void> {
+  const requestId = ++browseRequestId;
+  const listEl = $('browse-list');
+  listEl.setAttribute('aria-busy', 'true');
+  listEl.innerHTML = '<div class="browse-empty">Searching Drive…</div>';
+  try {
+    const token = await getToken();
+    const items = await searchDrive(query, token);
+    if (requestId !== browseRequestId) return;
+    searchMode = true;
+    browseItems = items;
+    renderBreadcrumbs(
+      $('breadcrumbs'),
+      [browsePath[0], { id: 'search', name: `Search: “${query}”` }],
+      () => {
+        clearSearchBox();
+        void loadBrowser();
+      },
+    );
+    listEl.setAttribute('aria-busy', 'false');
+    renderBrowseList();
+  } catch (error) {
+    if (requestId !== browseRequestId) return;
+    renderLoadFailure(listEl, error, () => runSearch(query));
+    toast('Drive search failed.');
+  }
+}
+
+const SORT_LABELS: Record<SortKey, string> = { name: 'Name', modified: 'Modified', size: 'Size' };
+
+function setSort(key: SortKey): void {
+  if (sortKey === key) {
+    sortDir = sortDir === 1 ? -1 : 1;
+  } else {
+    sortKey = key;
+    sortDir = key === 'name' ? 1 : -1; // newest / largest first feels right
+  }
+  localStorage.setItem(SORT_PREF, JSON.stringify({ key: sortKey, dir: sortDir }));
+  renderBrowseList();
+}
+
+function updateSortButtons(): void {
+  for (const key of Object.keys(SORT_LABELS) as SortKey[]) {
+    const btn = $(`sort-${key}`);
+    const active = key === sortKey;
+    btn.setAttribute('aria-pressed', String(active));
+    btn.textContent = SORT_LABELS[key] + (active ? (sortDir === 1 ? ' ↑' : ' ↓') : '');
   }
 }
 
@@ -157,22 +258,26 @@ function renderItems(
   items: DriveItem[],
   foldersOnly: boolean,
   onOpen: (item: DriveItem) => void,
+  emptyMsg?: string,
 ): void {
   const visible = items.filter((i) => i.isFolder || (!foldersOnly && i.isVideo));
   const hiddenCount = items.length - visible.length;
   listEl.innerHTML = '';
   if (!visible.length) {
     listEl.innerHTML = `<div class="browse-empty">${
-      foldersOnly ? 'No subfolders here.' : 'No folders or videos here.'
+      emptyMsg ?? (foldersOnly ? 'No subfolders here.' : 'No folders or videos here.')
     }</div>`;
   }
   for (const item of visible) {
     const row = document.createElement('button');
     row.className = 'browse-row' + (item.isFolder ? ' is-folder' : ' is-video');
+    const meta = item.isFolder
+      ? fmtDate(item.modifiedTime)
+      : [fmtBytes(item.size), fmtDate(item.modifiedTime)].filter(Boolean).join(' · ');
     row.innerHTML =
       `<span class="row-icon">${item.isFolder ? svgFolder : svgVideo}</span>` +
       `<span class="row-name">${escapeHtml(item.name)}</span>` +
-      `<span class="row-meta">${item.isFolder ? '' : fmtBytes(item.size)}</span>`;
+      `<span class="row-meta">${meta}</span>`;
     row.addEventListener('click', () => onOpen(item));
     listEl.appendChild(row);
   }
@@ -528,6 +633,28 @@ $('btn-add-row').addEventListener('click', () => addMetaRow());
 $('btn-new-folder').addEventListener('click', () =>
   startNewFolder($('browse-list'), browsePath[browsePath.length - 1].id, loadBrowser),
 );
+searchBox.addEventListener('input', () => {
+  filterText = searchBox.value;
+  if (searchMode && !filterText.trim()) {
+    void loadBrowser(); // cleared the box: leave search results, back to the folder
+    return;
+  }
+  renderBrowseList();
+});
+searchBox.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const q = searchBox.value.trim();
+    if (q) runAsync(() => runSearch(q));
+  } else if (e.key === 'Escape') {
+    const wasSearch = searchMode;
+    clearSearchBox();
+    if (wasSearch) void loadBrowser();
+    else renderBrowseList();
+  }
+});
+$('sort-name').addEventListener('click', () => setSort('name'));
+$('sort-modified').addEventListener('click', () => setSort('modified'));
+$('sort-size').addEventListener('click', () => setSort('size'));
 $('tab-my-drive').addEventListener('click', () => {
   browsePath = [MY_DRIVE];
   void loadBrowser();
