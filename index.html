@@ -10,6 +10,7 @@
   <script type="module" src="/src/main.ts"></script>
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to content</a>
   <header class="app-header">
     <div class="brand">FrameCut <span>Drive video trimmer</span></div>
     <div class="header-actions">
@@ -21,13 +22,18 @@
     </div>
   </header>
 
-  <main>
+  <main id="main">
     <!-- Step 1: sign in -->
     <section id="screen-signin" class="screen narrow">
       <h1>Cut the recording. Keep the context.</h1>
       <p class="lede">Pick a video from Google Drive, mark the useful section, add metadata, and save a clean copy. Everything runs in this browser tab &mdash; no application server or separate upload.</p>
-      <button id="btn-signin" class="primary big">Connect Google Drive</button>
-      <p class="fineprint">FrameCut requests Drive access so it can browse and download the video you choose, then save or share your trimmed copy. Your short-lived access token stays in this tab.</p>
+      <ol class="flow-summary" aria-label="FrameCut workflow">
+        <li><span>1</span>Choose</li>
+        <li><span>2</span>Trim</li>
+        <li><span>3</span>Save</li>
+      </ol>
+      <button id="btn-signin" class="primary big">Continue with Google</button>
+      <p class="fineprint">FrameCut uses Drive access—not Gmail—to browse and download the video you choose, then save or share your trimmed copy. The short-lived token stays in this tab and is revoked when you sign out.</p>
     </section>
 
     <!-- Step 2: browse Drive -->
@@ -35,7 +41,7 @@
       <details class="help">
         <summary>How to use this</summary>
         <ol>
-          <li>Open a folder to browse; click a <strong>video</strong> to load it.</li>
+          <li>Open a folder to browse; click a <strong>video</strong> to load it. Use <strong>Shared with me</strong> to reach folders others shared with you.</li>
           <li>Drag the timeline handles (or press <kbd>I</kbd>/<kbd>O</kbd>) to set the start and end.</li>
           <li>Add any metadata, then <strong>Trim and save to Drive</strong> — the trimmed copy lands in the folder you choose.</li>
           <li>Tick <strong>anyone with the link can view</strong> to get a shareable link.</li>
@@ -48,6 +54,10 @@
             <button id="btn-new-folder" class="ghost small" type="button">+ New folder</button>
             <button id="btn-share-folder" class="ghost small" type="button">Share folder link</button>
           </div>
+        </div>
+        <div class="root-tabs" role="group" aria-label="Drive section">
+          <button id="tab-my-drive" class="root-tab" type="button" aria-pressed="true">My Drive</button>
+          <button id="tab-shared" class="root-tab" type="button" aria-pressed="false">Shared with me</button>
         </div>
         <nav id="breadcrumbs" class="breadcrumbs" aria-label="Folder path"></nav>
       </div>
@@ -129,6 +139,10 @@
       <div class="browse-topline">
         <h2>Save trimmed video in&hellip;</h2>
         <button id="fm-new-folder" class="ghost small" type="button">+ New folder</button>
+      </div>
+      <div class="root-tabs" role="group" aria-label="Drive section">
+        <button id="fm-tab-my-drive" class="root-tab" type="button" aria-pressed="true">My Drive</button>
+        <button id="fm-tab-shared" class="root-tab" type="button" aria-pressed="false">Shared with me</button>
       </div>
       <nav id="fm-breadcrumbs" class="breadcrumbs" aria-label="Folder path"></nav>
       <div id="fm-list" class="browse-list folder-only"></div>

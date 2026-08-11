@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { getFolder, listFolder, MY_DRIVE } from '../src/browser';
+import { getFolder, listFolder, MY_DRIVE, SHARED_WITH_ME } from '../src/browser';
 
 const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -44,8 +44,29 @@ describe('Drive folder browser', () => {
     expect(firstUrl.searchParams.get('q')).toBe("'folder\\'id' in parents and trashed=false");
     expect(firstUrl.searchParams.get('pageSize')).toBe('1000');
     expect(firstUrl.searchParams.get('supportsAllDrives')).toBe('true');
+    expect(firstUrl.searchParams.get('corpora')).toBe('allDrives');
     expect(secondUrl.searchParams.get('pageToken')).toBe('page-2');
     expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer secret-token');
+  });
+
+  it('lists the virtual "Shared with me" root via the sharedWithMe query', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      files: [
+        { id: 'shared-folder', name: 'Colleague videos', mimeType: 'application/vnd.google-apps.folder' },
+        { id: 'shared-video', name: 'Guest lecture.mp4', mimeType: 'video/mp4', size: '99' },
+      ],
+    }));
+
+    const items = await listFolder(SHARED_WITH_ME.id, 'token');
+
+    expect(items).toEqual([
+      expect.objectContaining({ id: 'shared-folder', isFolder: true }),
+      expect.objectContaining({ id: 'shared-video', isVideo: true, size: 99 }),
+    ]);
+    const url = new URL(fetchMock.mock.calls[0][0]);
+    expect(url.searchParams.get('q')).toBe('sharedWithMe and trashed=false');
+    // The sharedWithMe query term is only valid in the user corpus.
+    expect(url.searchParams.get('corpora')).toBe('user');
   });
 
   it('surfaces listing HTTP failures', async () => {
@@ -71,7 +92,13 @@ describe('Drive folder browser', () => {
     await expect(getFolder('missing', 'token')).resolves.toEqual({ id: 'missing', name: 'Folder' });
   });
 
-  it('exports a stable root breadcrumb', () => {
+  it('resolves the virtual shared root without an API call', async () => {
+    await expect(getFolder(SHARED_WITH_ME.id, 'token')).resolves.toEqual(SHARED_WITH_ME);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('exports stable root breadcrumbs', () => {
     expect(MY_DRIVE).toEqual({ id: 'root', name: 'My Drive' });
+    expect(SHARED_WITH_ME).toEqual({ id: 'shared-with-me', name: 'Shared with me' });
   });
 });

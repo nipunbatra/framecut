@@ -1,6 +1,6 @@
 import './style.css';
 import { initAuth, getToken, signOut, fetchUserEmail } from './auth';
-import { listFolder, MY_DRIVE, type DriveItem, type Crumb } from './browser';
+import { listFolder, MY_DRIVE, SHARED_WITH_ME, type DriveItem, type Crumb } from './browser';
 import { downloadFile, resumableUpload, uploadSmallFile, createFolder, shareAnyone } from './drive';
 import { trimVideo, toTimestamp, preloadFfmpeg } from './trimmer';
 import { Timeline } from './timeline';
@@ -110,11 +110,22 @@ function renderBreadcrumbs(el: HTMLElement, path: Crumb[], onGo: (i: number) => 
   });
 }
 
+// "Shared with me" is a virtual root: nothing can be created or saved in it.
+const isSharedRoot = (crumb: Crumb): boolean => crumb.id === SHARED_WITH_ME.id;
+
+function setRootTabs(myDriveTabId: string, sharedTabId: string, root: Crumb): void {
+  $(myDriveTabId).setAttribute('aria-pressed', String(!isSharedRoot(root)));
+  $(sharedTabId).setAttribute('aria-pressed', String(isSharedRoot(root)));
+}
+
 async function loadBrowser(): Promise<void> {
   const requestId = ++browseRequestId;
   const listEl = $('browse-list');
+  const current = browsePath[browsePath.length - 1];
   // Sharing "My Drive" itself makes no sense; only enable inside a folder.
   $<HTMLButtonElement>('btn-share-folder').disabled = browsePath.length <= 1;
+  $<HTMLButtonElement>('btn-new-folder').disabled = isSharedRoot(current);
+  setRootTabs('tab-my-drive', 'tab-shared', browsePath[0]);
   renderBreadcrumbs($('breadcrumbs'), browsePath, (i) => {
     browsePath = browsePath.slice(0, i + 1);
     void loadBrowser();
@@ -179,9 +190,11 @@ function escapeHtml(s: string): string {
 
 async function openVideo(item: DriveItem): Promise<void> {
   picked = { id: item.id, name: item.name, mimeType: item.mimeType, size: item.size };
-  // Default the save destination to the folder the video came from.
-  destFolder = browsePath[browsePath.length - 1];
-  $('dest-label').textContent = destFolder.name;
+  // Default the save destination to the folder the video came from — unless
+  // that is the virtual "Shared with me" root, which cannot hold uploads.
+  const from = browsePath[browsePath.length - 1];
+  destFolder = isSharedRoot(from) ? null : from;
+  $('dest-label').textContent = destFolder?.name ?? MY_DRIVE.name;
 
   // Load ffmpeg.wasm in the background now so it is ready by the time the
   // download finishes and the user hits Save — the core load stops being
@@ -238,6 +251,10 @@ async function openFolderModal(): Promise<void> {
 async function loadFolderModal(): Promise<void> {
   const requestId = ++folderModalRequestId;
   const listEl = $('fm-list');
+  const current = fmPath[fmPath.length - 1];
+  $<HTMLButtonElement>('fm-choose').disabled = isSharedRoot(current);
+  $<HTMLButtonElement>('fm-new-folder').disabled = isSharedRoot(current);
+  setRootTabs('fm-tab-my-drive', 'fm-tab-shared', fmPath[0]);
   renderBreadcrumbs($('fm-breadcrumbs'), fmPath, (i) => {
     fmPath = fmPath.slice(0, i + 1);
     void loadFolderModal();
@@ -511,6 +528,22 @@ $('btn-add-row').addEventListener('click', () => addMetaRow());
 $('btn-new-folder').addEventListener('click', () =>
   startNewFolder($('browse-list'), browsePath[browsePath.length - 1].id, loadBrowser),
 );
+$('tab-my-drive').addEventListener('click', () => {
+  browsePath = [MY_DRIVE];
+  void loadBrowser();
+});
+$('tab-shared').addEventListener('click', () => {
+  browsePath = [SHARED_WITH_ME];
+  void loadBrowser();
+});
+$('fm-tab-my-drive').addEventListener('click', () => {
+  fmPath = [MY_DRIVE];
+  void loadFolderModal();
+});
+$('fm-tab-shared').addEventListener('click', () => {
+  fmPath = [SHARED_WITH_ME];
+  void loadFolderModal();
+});
 $('btn-share-folder').addEventListener('click', guard(async () => {
   const folder = browsePath[browsePath.length - 1];
   const token = await getToken();
