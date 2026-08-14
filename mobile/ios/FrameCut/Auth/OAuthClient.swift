@@ -6,6 +6,10 @@ enum AuthError: LocalizedError {
     case notConfigured
     case cancelled
     case server(String)
+    /// The stored refresh token is dead — revoked, expired, or the consent was
+    /// withdrawn. Distinct from `.server` because only this one should sign the
+    /// user out; a transient 500 must not.
+    case grantRejected
     case noRefreshToken
 
     var errorDescription: String? {
@@ -13,6 +17,7 @@ enum AuthError: LocalizedError {
         case .notConfigured: "This build has no Google client id yet. See mobile/README.md."
         case .cancelled: "Sign-in was cancelled."
         case .server(let m): m
+        case .grantRejected: "Your Google sign-in expired. Please sign in again."
         case .noRefreshToken: "Google did not return a refresh token. Sign in again."
         }
     }
@@ -155,9 +160,10 @@ final class OAuthClient: NSObject, ObservableObject {
         do {
             return try await task.value
         } catch {
-            // A refresh token that Google has revoked or expired is dead; drop
-            // it so the UI falls back to the sign-in screen instead of looping.
-            if case AuthError.server = error { signOutLocally() }
+            // Only a definitively rejected grant clears the session. A network
+            // blip or a 5xx must leave the refresh token alone, or a moment of
+            // bad signal would silently sign the user out.
+            if case AuthError.grantRejected = error { signOutLocally() }
             throw error
         }
     }
@@ -215,6 +221,9 @@ final class OAuthClient: NSObject, ObservableObject {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let detail = String(data: data, encoding: .utf8) ?? "unknown error"
+            // Google reports a dead grant as 400 invalid_grant. Everything else
+            // — 5xx, rate limits — is potentially transient.
+            if detail.contains("invalid_grant") { throw AuthError.grantRejected }
             throw AuthError.server("Google rejected the token request: \(detail)")
         }
         return try JSONDecoder().decode(TokenResponse.self, from: data)

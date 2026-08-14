@@ -18,11 +18,28 @@ FFmpeg, no Google Sign-In SDK. Everything is a platform API.
 
 The trim is a **stream copy**, not a re-encode. The compressed video and audio
 samples are moved into a new container untouched, so the phone never decodes or
-encodes a frame. A cut from a 30-minute lecture finishes in **seconds**, the
-quality is bit-identical to the source, and the battery barely notices.
+encodes a frame. The quality is bit-identical to the source and the battery
+barely notices.
+
+Measured on the exact code path the iOS app uses (`AVAssetExportSession`,
+passthrough preset), trimming 45 s off the front and 90 s off the back of a
+30-minute 1080p file:
+
+```
+source:   384.4 MB, 30.0 min
+keeping:  45s – 1710s (27.8 min)
+TRIM TOOK: 4.03 seconds          # 413x faster than playback
+```
+
+That run was on this Mac rather than a handset, but the operation is bound by
+storage throughput rather than CPU, and iPhone/modern Android storage is fast —
+expect the same few-seconds order. Re-encoding the same clip would take minutes
+even with hardware acceleration, which is exactly why neither app offers it.
 
 The trade-off is keyframe alignment: the start lands on the last keyframe at or
 before your handle, so it can sit a second or two earlier than you dragged.
+(In the run above, asking to keep 27.75 min yielded 27.75 min of output — the
+snap is small.)
 For topping and tailing a lecture that is the right deal — a precise cut would
 mean re-encoding the whole kept region, which is the one operation that is
 genuinely slow on a phone. Both apps say this on the trim screen.
