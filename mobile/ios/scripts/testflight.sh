@@ -44,23 +44,39 @@ fi
 # so derive one that always increases.
 BUILD_NUMBER="$(date +%Y%m%d%H%M)"
 
-rm -rf "$BUILD_DIR"
+# Archiving is the slow part. If a previous run already produced one and the
+# sources have not changed since, reuse it — that turns a retry (say, after
+# creating the App Store Connect record) into a few seconds instead of minutes.
+# Pass --clean to force a fresh archive.
+REUSE_ARCHIVE=false
+if [ "${1:-}" != "--clean" ] && [ -d "$ARCHIVE" ]; then
+  if [ -z "$(find FrameCut FrameCut.xcconfig FrameCut-Info.plist -newer "$ARCHIVE" 2>/dev/null | head -1)" ]; then
+    REUSE_ARCHIVE=true
+  fi
+fi
+
+if [ "$REUSE_ARCHIVE" = true ]; then
+  echo "==> Reusing the existing archive (nothing changed since it was built)"
+  echo "    Pass --clean to rebuild it from scratch."
+else
+  rm -rf "$BUILD_DIR"
+  mkdir -p "$BUILD_DIR"
+  echo "==> Archiving (build $BUILD_NUMBER)"
+  xcodebuild archive \
+    -project FrameCut.xcodeproj \
+    -scheme FrameCut \
+    -configuration Release \
+    -destination 'generic/platform=iOS' \
+    -archivePath "$ARCHIVE" \
+    -allowProvisioningUpdates \
+    -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
+    -authenticationKeyID "$ASC_KEY_ID" \
+    -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+    CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+    DEVELOPMENT_TEAM="$TEAM_ID"
+fi
+
 mkdir -p "$BUILD_DIR"
-
-echo "==> Archiving (build $BUILD_NUMBER)"
-xcodebuild archive \
-  -project FrameCut.xcodeproj \
-  -scheme FrameCut \
-  -configuration Release \
-  -destination 'generic/platform=iOS' \
-  -archivePath "$ARCHIVE" \
-  -allowProvisioningUpdates \
-  -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
-  -authenticationKeyID "$ASC_KEY_ID" \
-  -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
-  CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-  DEVELOPMENT_TEAM="$TEAM_ID"
-
 cat > "$BUILD_DIR/ExportOptions.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -79,6 +95,7 @@ cat > "$BUILD_DIR/ExportOptions.plist" <<PLIST
 PLIST
 
 echo "==> Exporting and uploading to TestFlight"
+set +e
 xcodebuild -exportArchive \
   -archivePath "$ARCHIVE" \
   -exportPath "$EXPORT_DIR" \
@@ -86,7 +103,35 @@ xcodebuild -exportArchive \
   -allowProvisioningUpdates \
   -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
   -authenticationKeyID "$ASC_KEY_ID" \
-  -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+  -authenticationKeyIssuerID "$ASC_ISSUER_ID" 2>&1 | tee "$BUILD_DIR/export.log"
+EXPORT_STATUS=${PIPESTATUS[0]}
+set -e
+
+# Apple reports "no app record yet" as an opaque "Error Downloading App
+# Information", so translate it into the one action that actually fixes it.
+if [ "$EXPORT_STATUS" -ne 0 ]; then
+  LOGS="$(ls -dt "${TMPDIR:-/tmp}"/FrameCut_*.xcdistributionlogs 2>/dev/null | head -1)"
+  if grep -qs "missingApp" "$LOGS"/*.log 2>/dev/null ||
+     grep -qs "Error Downloading App Information" "$BUILD_DIR/export.log"; then
+    cat >&2 <<MSG
+
+────────────────────────────────────────────────────────────────────
+The archive built and signed fine. The upload failed only because
+App Store Connect has no app record for $BUNDLE_ID yet.
+
+Create it once (about a minute):
+  1. https://appstoreconnect.apple.com/apps  →  "+"  →  New App
+  2. Platform: iOS
+     Name:     FrameCut          (must be unique across the store)
+     Language: English (U.K.)
+     Bundle ID: $BUNDLE_ID
+     SKU:      framecut
+  3. Re-run this script. It reuses the archive, so it takes seconds.
+────────────────────────────────────────────────────────────────────
+MSG
+  fi
+  exit "$EXPORT_STATUS"
+fi
 
 echo
 echo "Uploaded build $BUILD_NUMBER for $BUNDLE_ID."
