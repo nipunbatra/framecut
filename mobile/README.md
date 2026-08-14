@@ -143,24 +143,31 @@ Set `DEVELOPMENT_TEAM` in `FrameCut.xcconfig` to your Apple team id
 
 ### iOS — TestFlight
 
-`mobile/ios/scripts/testflight.sh` archives, signs, and uploads in one go. It
-needs two things that only exist in your App Store Connect account:
-
-1. **An app record.** App Store Connect → Apps → **+** → New App, with bundle
-   id `io.github.nipunbatra.framecut`. This only has to be done once, and it is
-   what mints the eventual TestFlight invite link.
-2. **Your API issuer id.** App Store Connect → Users and Access → Integrations
-   → App Store Connect API. It is the UUID at the top of the page. Your API
-   keys are already on this machine (`74ZBV87T64`, `J9YGJ3869A`), so the issuer
-   id is the only missing piece.
-
-Then:
+`mobile/ios/scripts/testflight.sh` archives, signs, and uploads in one go:
 
 ```bash
-export ASC_ISSUER_ID=<uuid-from-step-2>
+export ASC_ISSUER_ID=$(cat ~/.appstoreconnect/issuer_id)
 export ASC_KEY_ID=74ZBV87T64
 ./mobile/ios/scripts/testflight.sh
 ```
+
+The credentials it needs are already on this machine, in the same places the
+VayuChat release scripts use them: the API keys in
+`~/.appstoreconnect/private_keys/` and the issuer id in
+`~/.appstoreconnect/issuer_id`.
+
+The one thing that is **not** automatable is the App Store Connect **app
+record** — Apple's API can read and update apps but cannot create them, so the
+first one has to be made in the web UI:
+
+> App Store Connect → Apps → **+** → New App
+> Platform **iOS**, Bundle ID `io.github.nipunbatra.framecut`, SKU `framecut`,
+> and any unique store name.
+
+Until that exists, the export step fails with the rather unhelpful
+`Error Downloading App Information`; the script detects this case and prints
+the fix. Archiving is cached, so re-running after creating the record takes
+seconds rather than minutes. Pass `--clean` to force a fresh archive.
 
 The build shows up under TestFlight after 5–15 minutes of processing. Add
 testers there and TestFlight generates the public install link.
