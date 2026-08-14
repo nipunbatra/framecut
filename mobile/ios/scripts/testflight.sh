@@ -56,8 +56,13 @@ if [ "${1:-}" != "--clean" ] && [ -d "$ARCHIVE" ]; then
 fi
 
 if [ "$REUSE_ARCHIVE" = true ]; then
+  # The build number is baked in when the archive is made, so a reused archive
+  # keeps its original one. Report that rather than the number computed above,
+  # which would be a lie.
+  BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:CFBundleVersion' \
+    "$ARCHIVE/Info.plist" 2>/dev/null || echo "$BUILD_NUMBER")"
   echo "==> Reusing the existing archive (nothing changed since it was built)"
-  echo "    Pass --clean to rebuild it from scratch."
+  echo "    Build number $BUILD_NUMBER. Pass --clean to rebuild it from scratch."
 else
   rm -rf "$BUILD_DIR"
   mkdir -p "$BUILD_DIR"
@@ -132,6 +137,11 @@ MSG
   fi
   exit "$EXPORT_STATUS"
 fi
+
+# App Store Connect rejects a build number it has already seen, so retire the
+# archive once it has been accepted. The next run then builds a fresh one with
+# a new number instead of failing on a duplicate.
+rm -rf "$ARCHIVE"
 
 echo
 echo "Uploaded build $BUILD_NUMBER for $BUNDLE_ID."
