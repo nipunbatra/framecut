@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Compose paints its own Material 3 surface; this platform theme only needs
+      to supply an edge-to-edge, action-bar-free window in the right day/night
+      flavour so there is no colour flash before the first frame.
+    -->
+    <style name="Theme.FrameCut" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/framecut_window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>

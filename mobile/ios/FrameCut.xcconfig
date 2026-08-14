@@ -1,0 +1,17 @@
+// The ONLY place you need to edit to connect this app to Google.
+//
+// Create an "iOS" OAuth client in the Google Cloud console for bundle id
+// io.github.nipunbatra.framecut, then paste the part of its client id that
+// comes BEFORE ".apps.googleusercontent.com" below.
+//
+// Example: for client id 754571415429-a1b2c3.apps.googleusercontent.com
+//          set GOOGLE_CLIENT_ID_SUFFIX = 754571415429-a1b2c3
+//
+// This one value drives both the client id used at runtime and the custom URL
+// scheme Google redirects back to.
+
+GOOGLE_CLIENT_ID_SUFFIX = 754571415429-b8tk8b4o8b6b4muuso9v0ahe28k5eh3q
+
+// Your Apple Developer team id, needed only to run on a real device or ship to
+// TestFlight. Leave empty to build for the simulator.
+DEVELOPMENT_TEAM = LFMTDT3LDX

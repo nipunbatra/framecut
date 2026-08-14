@@ -1,0 +1,33 @@
+name: iOS build
+
+on:
+  push:
+    branches: [main]
+    paths: ['mobile/ios/**', '.github/workflows/ios.yml']
+  pull_request:
+    paths: ['mobile/ios/**', '.github/workflows/ios.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Simulator build only: it needs no signing identity, so it verifies the
+      # code compiles without any secrets. Shipping to TestFlight is done from
+      # a machine with the App Store Connect key — see mobile/ios/scripts.
+      - name: Build for the simulator
+        working-directory: mobile/ios
+        run: |
+          xcodebuild build \
+            -project FrameCut.xcodeproj \
+            -scheme FrameCut \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO
