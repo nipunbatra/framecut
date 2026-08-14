@@ -725,6 +725,14 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// A phone build that has not been published yet would otherwise offer a link
+// that 404s. Drop `data-pending` from the anchor once its URL is live.
+for (const link of document.querySelectorAll<HTMLAnchorElement>('.app-link[data-pending="true"]')) {
+  link.classList.add('pending');
+  link.removeAttribute('href');
+  link.setAttribute('aria-disabled', 'true');
+}
+
 // ---- boot ----
 addMetaRow('Lecture');
 addMetaRow('Topic');

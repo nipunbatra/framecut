@@ -344,6 +344,35 @@ textarea { resize: vertical; }
   font-size: 0.9em;
 }
 
+.apps {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+  text-align: left;
+}
+.apps h2 { font-size: 1.05rem; margin-bottom: 0.35rem; }
+.apps p { color: var(--muted); font-size: 0.92rem; margin-bottom: 0.9rem; }
+.app-links { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.app-link {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  flex: 1 1 12rem;
+  padding: 0.7rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  text-decoration: none;
+  color: var(--text);
+}
+.app-link:hover { border-color: var(--accent); background: var(--accent-soft); }
+.app-link strong { font-size: 0.95rem; }
+.app-link span { font-size: 0.85rem; color: var(--muted); }
+/* A build that has not been published yet stays visible but inert, so the
+   page never offers a link that 404s. */
+.app-link.pending { opacity: 0.6; pointer-events: none; }
+.app-link.pending span::after { content: " — coming soon"; }
+
 .browse-head { margin-bottom: 0.8rem; }
 .browse-head h1 { margin-bottom: 0.5rem; }
 .browse-topline {
